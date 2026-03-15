@@ -1,0 +1,1683 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>角ダクト製作伝票</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.2/babel.min.js"></script>
+</head>
+<body>
+  <div id="root"></div>
+  <script type="text/babel">
+const { useState } = React;
+
+
+// ─── 定数 ────────────────────────────────────────────────────────
+const THICKNESS_OPTIONS   = ["0.5","0.6","0.8","1.0","1.2","1.6"];
+const FLANGE_OPTIONS      = ["共板","アングル","スライド"];
+const SEAM_OPTIONS        = ["ボタンパンチ","Pittsburgh","四折"];
+const SEAL_OPTIONS        = ["四隅","全周","なし"];
+const SEAL_METHOD_OPTIONS = ["シール","コーキング","なし"];
+const RIB_OPTIONS         = ["あり","なし"];
+const MATERIAL_OPTIONS    = ["亜鉛鉄板","ステンレス","ガルバリウム"];
+const PART_TYPES = [
+  { id:"straight", label:"直管"     },
+  { id:"elbow90",  label:"90°エルボ" },
+  { id:"elbow45",  label:"45°エルボ" },
+  { id:"scurve",   label:"Sカーブ"   },
+  { id:"hopper",   label:"ホッパー"  },
+  { id:"elbow_ldiff", label:"内L違いエルボ" },
+  { id:"elbow_rdiff", label:"内R違いエルボ（角度指定）" },
+];
+const HOPPER_BASES = ["下平","上平","上下芯々"];
+const USERS = [
+  { id:"suzuki",   name:"鈴木",  role:"職人"   },
+  { id:"tanaka",   name:"田中",  role:"管理者" },
+  { id:"kurosawa", name:"黒澤", role:"管理者" },
+];
+
+// ─── ダミーデータ ────────────────────────────────────────────────
+const INITIAL_SITES = [
+  { id:"s1", name:"帝京平成大学"    },
+  { id:"s2", name:"渋谷プロジェクト" },
+  { id:"s3", name:"新宿ビル改修"    },
+];
+const INITIAL_FLOORS = {
+  s1:[{id:"f1",name:"B1F"},{id:"f2",name:"1F"},{id:"f3",name:"2F"},{id:"f4",name:"3F"}],
+  s2:[{id:"f5",name:"1F"},{id:"f6",name:"2F"}],
+  s3:[{id:"f7",name:"B1F"},{id:"f8",name:"1F"}],
+};
+const INITIAL_AREAS = {
+  f1:[{id:"a1",name:"機械室"},{id:"a2",name:"廊下"}],
+  f2:[{id:"a3",name:"病室A"},{id:"a4",name:"病室B"},{id:"a5",name:"廊下"}],
+  f3:[{id:"a6",name:"外来"}],f4:[{id:"a7",name:"会議室"}],
+  f5:[{id:"a8",name:"店舗"}],f6:[{id:"a9",name:"オフィス"}],
+  f7:[{id:"a10",name:"機械室"}],f8:[{id:"a11",name:"ロビー"}],
+};
+const INITIAL_SYSTEMS = {
+  a1:[{id:"sys1",name:"SA-1系統",thickness:"0.6",flange:"共板",seam:"ボタンパンチ",seal:"四隅",sealMethod:"シール",rib:"あり",material:"亜鉛鉄板"}],
+  a2:[],
+  a3:[{id:"sys2",name:"RA-2系統",thickness:"0.8",flange:"アングル",seam:"ボタンパンチ",seal:"四隅",sealMethod:"シール",rib:"なし",material:"亜鉛鉄板"}],
+};
+
+let _id = 3000;
+const newId = () => `id_${_id++}`;
+
+// ─── PDF用SVG文字列生成 ──────────────────────────────────────────
+function partSvgString(p) {
+  // 入力画面と同じReactコンポーネントを隠しDOMにレンダリングしてSVG文字列を取得
+  const container = document.createElement("div");
+  container.style.cssText = "position:fixed;left:-99999px;top:0;visibility:hidden;";
+  document.body.appendChild(container);
+  try {
+    let elem = null;
+    if      (p.type==="straight") elem = React.createElement(SvgStraight, {W:p.width, H:p.height, L:p.length});
+    else if (p.type==="elbow90")  elem = React.createElement(SvgElbow90,  {W:p.width, H:p.height, R:p.r, offsetAmt:p.elbowOffset?p.elbowOffsetAmt:"", offsetDir:p.elbowOffsetDir, offsetArrow:p.elbowOffsetArrow, mirror:p.mirrorDir==="left"});
+    else if (p.type==="elbow45")  elem = React.createElement(SvgElbow45,  {W:p.width, H:p.height, R:p.r, offsetAmt:p.elbowOffset?p.elbowOffsetAmt:"", offsetDir:p.elbowOffsetDir, offsetArrow:p.elbowOffsetArrow, mirror:p.mirrorDir==="left"});
+    else if (p.type==="scurve")   elem = React.createElement(SvgScurve,   {W:p.width, H:p.height, R:p.r, L:p.length, offsetAmt:p.elbowOffset?p.elbowOffsetAmt:"", offsetDir:p.elbowOffsetDir, offsetArrow:p.elbowOffsetArrow, mirror:p.mirrorDir==="left"});
+    else if (p.type==="elbow_ldiff") elem = React.createElement(SvgElbowLdiff, {W:p.width, H:p.height, R:p.r, ldiffAmt:p.ldiffAmt, ldiffSide:p.ldiffSide, mirror:p.mirrorDir==="left"});
+    else if (p.type==="elbow_rdiff") elem = React.createElement(SvgElbowRdiff, {W:p.width, H:p.height, R:p.r, ang:p.angle||"90", ldiffAmt:p.ldiffAmt, ldiffSide:p.ldiffSide, mirror:p.mirrorDir==="left"});
+    else if (p.type==="hopper")   elem = React.createElement(SvgHopper,   {inW:p.inW, inH:p.inH, outW:p.outW, outH:p.outH, L:p.length, base:p.base, offset:p.offset, offsetAmt:p.offsetAmt, baseAmt:p.baseAmt, baseDir:p.baseDir, baseArrow:p.baseArrow, mirror:p.mirrorDir==="left"});
+    if (!elem) return "";
+    const root = ReactDOM.createRoot(container);
+    root.render(elem);
+    // renderは非同期なので同期的に取得するため flushSync を使う
+    ReactDOM.flushSync(() => root.render(elem));
+    const svgEl = container.querySelector("svg");
+    const svgStr = svgEl ? svgEl.outerHTML : "";
+    root.unmount();
+    return svgStr;
+  } finally {
+    document.body.removeChild(container);
+  }
+}
+
+// ─── PDF出力（html2canvas方式・日本語対応） ───────────────────────
+function generatePDF(slip, system, ctx) {
+  const parts = slip.parts || [];
+  const partLabel = p => {
+    if(!p) return {type:"",qty:"",dim:""};
+    const t = PART_TYPES.find(x=>x.id===p.type)?.label||p.type;
+    let d="";
+    if(p.type==="straight")                        d=`${p.width||"-"}×${p.height||"-"} L=${p.length||"-"}`;
+    else if(p.type==="elbow90"||p.type==="elbow45"){const os=p.elbowOffset&&p.elbowOffsetAmt?` ${p.elbowOffsetAmt}${p.elbowOffsetDir||""} ${p.elbowOffsetArrow||""}`.trim():""; d=`${p.width||"-"}×${p.height||"-"} R=${p.r||"-"}${os}`;}
+    else if(p.type==="scurve"){const os=p.elbowOffset&&p.elbowOffsetAmt?` ${p.elbowOffsetAmt}${p.elbowOffsetDir||""} ${p.elbowOffsetArrow||""}`.trim():""; d=`${p.width||"-"}×${p.height||"-"} オフセット=${p.r||"-"} L=${p.length||"-"}${os}`;}
+    else if(p.type==="hopper")                     d=`入口${p.inW||"-"}×${p.inH||"-"} 出口${p.outW||"-"}×${p.outH||"-"} L=${p.length||"-"} ${p.base||""}`;
+    return {type:t, qty:String(p.qty||1), dim:d};
+  };
+
+  const html = `
+  <div id="pdf-content" style="width:794px;padding:20px;font-family:'Meiryo','メイリオ','Hiragino Sans','Yu Gothic',sans-serif;font-size:11px;background:#fff;">
+    <h2 style="text-align:center;font-size:16px;margin:0 0 10px">曲管リスト（角ダクト製作伝票）</h2>
+    <table style="width:100%;border-collapse:collapse;margin-bottom:6px;">
+      <tr>
+        <td style="background:#e5e7eb;font-weight:bold;padding:3px 5px;border:1px solid #999;width:60px">現場名</td>
+        <td style="padding:3px 5px;border:1px solid #999;width:160px">${ctx.siteName}</td>
+        <td style="background:#e5e7eb;font-weight:bold;padding:3px 5px;border:1px solid #999;width:50px">フロア</td>
+        <td style="padding:3px 5px;border:1px solid #999;width:120px">${ctx.floorName}</td>
+        <td style="background:#e5e7eb;font-weight:bold;padding:3px 5px;border:1px solid #999;width:50px">日付</td>
+        <td style="padding:3px 5px;border:1px solid #999">${slip.date||""}</td>
+      </tr>
+      <tr>
+        <td style="background:#e5e7eb;font-weight:bold;padding:3px 5px;border:1px solid #999">エリア</td>
+        <td style="padding:3px 5px;border:1px solid #999">${ctx.areaName}</td>
+        <td style="background:#e5e7eb;font-weight:bold;padding:3px 5px;border:1px solid #999">系統</td>
+        <td style="padding:3px 5px;border:1px solid #999">${system?.name||""}</td>
+        <td style="background:#e5e7eb;font-weight:bold;padding:3px 5px;border:1px solid #999">No.</td>
+        <td style="padding:3px 5px;border:1px solid #999">${slip.slipNo||""}</td>
+      </tr>
+    </table>
+    <div style="background:#d2e3ff;font-weight:bold;padding:3px 8px;border:1px solid #999;margin-bottom:2px">系統仕様</div>
+    <table style="width:100%;border-collapse:collapse;margin-bottom:8px;">
+      <tr>
+        ${system ? [["板厚",system.thickness+" mm"],["材質",system.material],["フランジ",system.flange],["ハゼ",system.seam]].map(([l,v])=>`
+          <td style="background:#f5f5f5;font-weight:bold;padding:2px 5px;border:1px solid #999;width:55px">${l}</td>
+          <td style="padding:2px 5px;border:1px solid #999">${v||""}</td>`).join("") : ""}
+      </tr>
+      <tr>
+        ${system ? [["シール箇所",system.seal],["シール方法",system.sealMethod],["補強リブ",system.rib]].map(([l,v])=>`
+          <td style="background:#f5f5f5;font-weight:bold;padding:2px 5px;border:1px solid #999">${l}</td>
+          <td style="padding:2px 5px;border:1px solid #999">${v||""}</td>`).join("") : ""}
+        <td colspan="2" style="border:1px solid #999"></td>
+      </tr>
+    </table>
+    <table style="width:100%;border-collapse:collapse;margin-bottom:8px;">
+      <thead>
+        <tr style="background:#324f8c;color:#fff;">
+          <th style="padding:4px 5px;border:1px solid #666;width:25px">No.</th>
+          <th style="padding:4px 5px;border:1px solid #666;width:25px">数</th>
+          <th style="padding:4px 5px;border:1px solid #666">寸法図</th>
+          <th style="padding:4px 5px;border:1px solid #666;width:4px;background:#1e3a8a"></th>
+          <th style="padding:4px 5px;border:1px solid #666;width:25px">No.</th>
+          <th style="padding:4px 5px;border:1px solid #666;width:25px">数</th>
+          <th style="padding:4px 5px;border:1px solid #666">寸法図</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${Array.from({length:Math.ceil(parts.length/2)},(_,row)=>{
+          const left=parts[row*2], right=parts[row*2+1];
+          const l=partLabel(left), r=partLabel(right);
+          const bg=row%2===0?"#fcfcfc":"#f0f0ff";
+          const cell=(p,label,idx)=>p?`
+            <td style="padding:2px 4px;border:1px solid #ccc;text-align:center;vertical-align:middle;font-size:12px;font-weight:bold">${idx+1}</td>
+            <td style="padding:2px 4px;border:1px solid #ccc;text-align:center;vertical-align:middle;font-size:12px;font-weight:bold">${label.qty}</td>
+            <td style="padding:4px;border:1px solid #ccc;text-align:center;vertical-align:top">
+              <div style="font-size:12px;font-weight:bold;margin-bottom:4px">${label.type}</div>
+              <div style="text-align:center">${partSvgString(p)}</div>
+              <div style="font-size:11px;margin-top:4px;color:#1e3a8a;font-weight:bold">${label.dim}</div>
+            </td>
+          `:`
+            <td style="border:1px solid #eee"></td>
+            <td style="border:1px solid #eee"></td>
+            <td style="border:1px solid #eee"></td>
+          `;
+          return`<tr style="background:${bg};page-break-inside:avoid;break-inside:avoid">
+            ${cell(left,l,row*2)}
+            <td style="background:#324f8c;width:4px;padding:0"></td>
+            ${cell(right,r,row*2+1)}
+          </tr>`;
+        }).join("")}
+      </tbody>
+    </table>
+    <div style="font-size:10px;margin-top:4px">
+      製作社名: ${slip.manufacturer||""}　取付社名: ${slip.installer||""}　担当: ${slip.staff||""}　納期: ${slip.dueDate||""}
+    </div>
+  </div>`;
+
+  const container = document.createElement("div");
+  container.style.cssText = "position:fixed;left:-9999px;top:0;z-index:9999;width:794px;background:#fff";
+  container.innerHTML = html;
+  document.body.appendChild(container);
+
+  setTimeout(()=>{
+    const content = container.querySelector("#pdf-content");
+    const pageW=210, pageH=297;
+
+    // 各trのoffsetTop/offsetHeightを取得（fixed配置でもoffsetは正確）
+    const trEls = Array.from(content.querySelectorAll("tbody tr"));
+    const trTops = trEls.map(tr=>{
+      let el=tr, top=0;
+      while(el && el!==content){ top+=el.offsetTop; el=el.offsetParent; }
+      return top; // px (css)
+    });
+    const trBots = trEls.map((tr,i)=> trTops[i] + tr.offsetHeight);
+    const contentH = content.offsetHeight;
+    const contentW = content.offsetWidth; // 794
+
+    html2canvas(content, {scale:2, useCORS:true, backgroundColor:"#fff"}).then(canvas=>{
+      document.body.removeChild(container);
+      const { jsPDF } = window.jspdf;
+      const doc = new jsPDF({orientation:"portrait",unit:"mm",format:"a4"});
+
+      const sc = canvas.width / contentW; // canvas px per css px
+      const pxPerMm = contentW / pageW;   // css px per mm
+      const totalH = contentH / pxPerMm;  // mm
+
+      // ページ境界を行をまたがないよう計算
+      const pageBreaks = [0];
+      let nextBreak = pageH;
+      while(nextBreak < totalH){
+        let breakMm = nextBreak;
+        for(let i=0;i<trTops.length;i++){
+          const top = trTops[i] / pxPerMm;
+          const bot = trBots[i] / pxPerMm;
+          if(top < nextBreak && bot > nextBreak){
+            breakMm = top; // 行の先頭で切る
+            break;
+          }
+        }
+        pageBreaks.push(breakMm);
+        nextBreak = breakMm + pageH;
+      }
+
+      pageBreaks.forEach((startMm, idx)=>{
+        const endMm = idx+1 < pageBreaks.length ? pageBreaks[idx+1] : totalH;
+        const sliceHmm = endMm - startMm;
+        const srcY = Math.round(startMm * pxPerMm * sc);
+        const srcH = Math.round(sliceHmm * pxPerMm * sc);
+        if(srcH <= 0) return;
+        const tmp = document.createElement("canvas");
+        tmp.width = canvas.width;
+        tmp.height = srcH;
+        tmp.getContext("2d").drawImage(canvas,0,srcY,canvas.width,srcH,0,0,canvas.width,srcH);
+        if(idx>0) doc.addPage();
+        doc.addImage(tmp.toDataURL("image/png"),"PNG",0,0,pageW,sliceHmm);
+      });
+
+      doc.save(`伝票_${ctx.siteName}_${system?.name||""}_${slip.date}.pdf`);
+    }).catch(e=>{
+      document.body.removeChild(container);
+      alert("PDF出力エラー: "+e.message);
+      console.error(e);
+    });
+  }, 300);
+}
+
+// ─── 共通UI ──────────────────────────────────────────────────────
+const TopBar = ({title,onBack,right}) => (
+  <div className="bg-blue-800 text-white px-4 py-3 flex items-center justify-between shadow-md sticky top-0 z-10">
+    <div className="flex items-center gap-2">
+      {onBack && <button onClick={onBack} className="text-3xl leading-none pr-1">‹</button>}
+      <span className="text-base font-bold">{title}</span>
+    </div>
+    {right}
+  </div>
+);
+const BreadCrumb = ({parts}) => (
+  <div className="bg-blue-900 text-blue-200 text-xs px-4 py-1 flex gap-1 overflow-x-auto whitespace-nowrap">
+    {parts.map((p,i)=>(
+      <span key={i} className="flex items-center gap-1">
+        {i>0&&<span>›</span>}
+        <span className={i===parts.length-1?"text-white font-bold":""}>{p}</span>
+      </span>
+    ))}
+  </div>
+);
+const Card = ({children,className=""}) => <div className={`bg-white rounded-2xl shadow-md p-4 mb-3 ${className}`}>{children}</div>;
+const APP_VERSION = "v1.3";
+
+const SectionTitle = ({children}) => <div className="text-base font-bold text-blue-800 bg-blue-50 rounded-lg px-3 py-2 mb-3">{children}</div>;
+const Label = ({children}) => <div className="text-sm font-bold text-gray-600 mb-1">{children}</div>;
+const BtnPrimary = ({children,onClick,disabled,className=""}) => (
+  <button onClick={onClick} disabled={disabled}
+    className={`w-full py-4 bg-blue-700 text-white text-lg font-bold rounded-xl active:bg-blue-900 disabled:opacity-40 ${className}`}>
+    {children}
+  </button>
+);
+const BtnSub = ({children,onClick,className=""}) => (
+  <button onClick={onClick} className={`py-3 px-4 bg-gray-200 text-gray-800 text-base font-semibold rounded-xl active:bg-gray-300 ${className}`}>
+    {children}
+  </button>
+);
+const BtnDanger = ({children,onClick}) => (
+  <button onClick={onClick} className="py-2 px-3 bg-red-100 text-red-700 text-sm font-semibold rounded-lg active:bg-red-200">{children}</button>
+);
+
+// ★ 修正ポイント: type="text" + inputMode="numeric"
+//   controlled input を直接 <input> で書く → 余分な再レンダリングなし
+const NumField = ({label,value,onChange,placeholder=""}) => (
+  <div className="mb-3">
+    <Label>{label}</Label>
+    <input type="text" inputMode="numeric" value={value} onChange={e=>onChange(e.target.value)}
+      placeholder={placeholder}
+      className="w-full border-2 border-gray-300 rounded-xl px-4 py-3 text-lg focus:border-blue-500 focus:outline-none bg-white" />
+  </div>
+);
+const TxtField = ({label,value,onChange,placeholder=""}) => (
+  <div className="mb-3">
+    <Label>{label}</Label>
+    <input type="text" value={value} onChange={e=>onChange(e.target.value)}
+      placeholder={placeholder}
+      className="w-full border-2 border-gray-300 rounded-xl px-4 py-3 text-lg focus:border-blue-500 focus:outline-none bg-white" />
+  </div>
+);
+const SelField = ({label,value,onChange,options,placeholder="選択"}) => (
+  <div className="mb-3">
+    {label&&<Label>{label}</Label>}
+    <select value={value} onChange={e=>onChange(e.target.value)}
+      className="w-full border-2 border-gray-300 rounded-xl px-4 py-3 text-lg focus:border-blue-500 focus:outline-none bg-white appearance-none">
+      <option value="">{placeholder}</option>
+      {options.map(o=>typeof o==="string"
+        ?<option key={o} value={o}>{o}</option>
+        :<option key={o.id} value={o.id}>{o.name}</option>)}
+    </select>
+  </div>
+);
+const Toggle = ({label,value,onChange,options}) => (
+  <div className="mb-3">
+    {label&&<Label>{label}</Label>}
+    <div className="flex flex-wrap gap-2">
+      {options.map(o=>(
+        <button key={o} onClick={()=>onChange(o)}
+          className={`px-4 py-2 rounded-lg border-2 text-base font-semibold ${value===o?"bg-blue-700 text-white border-blue-700":"bg-white text-gray-700 border-gray-300"}`}>
+          {o}
+        </button>
+      ))}
+    </div>
+  </div>
+);
+
+// ─── 画面コンポーネント（すべてトップレベル定義） ──────────────────
+
+const LoginScreen = ({onLogin}) => {
+  const [uid,setUid] = useState("");
+  return (
+    <div className="min-h-screen bg-gray-100 flex flex-col items-center justify-center p-6">
+      <div className="w-full max-w-sm bg-white rounded-2xl shadow-lg p-6">
+        <div className="text-center mb-6">
+          <div className="text-4xl mb-2">🔧</div>
+          <div className="text-2xl font-extrabold text-blue-800">角ダクト伝票</div>
+          <div className="text-sm text-gray-400 mt-1">現場製作伝票アプリ</div>
+        </div>
+        <SelField value={uid} onChange={setUid}
+          options={USERS.map(u=>({id:u.id,name:`${u.name}（${u.role}）`}))}
+          placeholder="ユーザーを選択" />
+        <BtnPrimary onClick={()=>{const u=USERS.find(x=>x.id===uid);if(u)onLogin(u);}} disabled={!uid}>
+          ログイン
+        </BtnPrimary>
+      </div>
+    </div>
+  );
+};
+
+const ListScreen = ({title,items,onSelect,onBack,onAdd,breadcrumb}) => (
+  <div className="min-h-screen bg-gray-100 flex flex-col">
+    <TopBar title={title} onBack={onBack}/>
+    {breadcrumb&&breadcrumb.length>0&&<BreadCrumb parts={breadcrumb}/>}
+    <div className="flex-1 overflow-y-auto p-4">
+      {items.length===0&&<div className="text-center text-gray-400 mt-10">データがありません</div>}
+      {items.map(item=>(
+        <button key={item.id} onClick={()=>onSelect(item)}
+          className="w-full text-left bg-white rounded-xl shadow mb-3 px-5 py-4 text-lg font-semibold text-gray-800 active:bg-blue-50 border-2 border-transparent active:border-blue-300">
+          {item.name}
+        </button>
+      ))}
+      {onAdd&&(
+        <button onClick={onAdd}
+          className="w-full border-2 border-dashed border-blue-300 rounded-xl py-4 text-blue-600 font-bold text-base active:bg-blue-50 mb-3">
+          ＋ 新規追加
+        </button>
+      )}
+    </div>
+  </div>
+);
+
+const SystemScreen = ({systems,areaId,onSelect,onEdit,onCopy,onNew,onBack,breadcrumb}) => {
+  const list = systems[areaId]||[];
+  return (
+    <div className="min-h-screen bg-gray-100 flex flex-col">
+      <TopBar title="系統選択" onBack={onBack}/>
+      <BreadCrumb parts={breadcrumb}/>
+      <div className="flex-1 overflow-y-auto p-4">
+        {list.map(sys=>(
+          <div key={sys.id} className="bg-white rounded-xl shadow mb-3">
+            <button onClick={()=>onSelect(sys)} className="w-full text-left px-5 py-4 active:bg-blue-50">
+              <div className="text-lg font-bold text-gray-800">{sys.name}</div>
+              <div className="text-xs text-gray-400 mt-1">板厚:{sys.thickness} / {sys.flange} / {sys.seam} / リブ:{sys.rib}</div>
+            </button>
+            <div className="flex gap-2 px-4 pb-3">
+              <BtnSub onClick={()=>onEdit(sys)}>編集</BtnSub>
+              <BtnSub onClick={()=>onCopy(sys)}>コピー</BtnSub>
+            </div>
+          </div>
+        ))}
+        <button onClick={onNew}
+          className="w-full border-2 border-dashed border-blue-300 rounded-xl py-4 text-blue-600 font-bold text-base active:bg-blue-50 mb-3">
+          ＋ 系統を新規作成
+        </button>
+      </div>
+    </div>
+  );
+};
+
+const EditSystemScreen = ({initial,onSave,onBack}) => {
+  const [form,setForm] = useState(initial);
+  const set = (k,v) => setForm(p=>({...p,[k]:v}));
+  return (
+    <div className="min-h-screen bg-gray-100 flex flex-col">
+      <TopBar title="系統設定" onBack={onBack}/>
+      <div className="flex-1 overflow-y-auto p-4">
+        <Card><SectionTitle>系統名</SectionTitle>
+          <TxtField value={form.name} onChange={v=>set("name",v)} placeholder="例：SA-1系統"/>
+        </Card>
+        {[["板厚（mm）","thickness",THICKNESS_OPTIONS],["材質","material",MATERIAL_OPTIONS],
+          ["フランジ種類","flange",FLANGE_OPTIONS],["ハゼ種類","seam",SEAM_OPTIONS],
+          ["シール箇所","seal",SEAL_OPTIONS],["シール方法","sealMethod",SEAL_METHOD_OPTIONS],
+          ["補強リブ","rib",RIB_OPTIONS],
+        ].map(([lbl,key,opts])=>(
+          <Card key={key}><Toggle label={lbl} value={form[key]} onChange={v=>set(key,v)} options={opts}/></Card>
+        ))}
+        <BtnPrimary onClick={()=>onSave(form)} disabled={!form.name}>保存</BtnPrimary>
+      </div>
+    </div>
+  );
+};
+
+const pLabel = p => {
+  const t=PART_TYPES.find(x=>x.id===p.type)?.label||p.type;
+  if(p.type==="straight")                       return `${t} ${p.width||"-"}×${p.height||"-"} L${p.length||"-"}`;
+  if(p.type==="elbow90"||p.type==="elbow45"){const os=p.elbowOffset&&p.elbowOffsetAmt?` ${p.elbowOffsetAmt}${p.elbowOffsetDir||""} ${p.elbowOffsetArrow||""}`.trim():""; return `${t} ${p.width||"-"}×${p.height||"-"} R${p.r||"-"}${os}`;}
+  if(p.type==="scurve"){const os=p.elbowOffset&&p.elbowOffsetAmt?` ${p.elbowOffsetAmt}${p.elbowOffsetDir||""} ${p.elbowOffsetArrow||""}`.trim():""; return `${t} ${p.width||"-"}×${p.height||"-"} R${p.r||"-"} L${p.length||"-"}${os}`;}
+  if(p.type==="hopper")                         return `${t} ${p.inW||"-"}×${p.inH||"-"}→${p.outW||"-"}×${p.outH||"-"} L${p.length||"-"}`;
+  if(p.type==="elbow_rdiff"){return `${t} W${p.width||"-"}×H${p.height||"-"} 入口R${p.r||"-"} 出口R${p.r2||"-"} ${p.angle||90}°`;}
+  if(p.type==="elbow_ldiff"){const inL=Number(p.r||0); const outL=Number(p.r||0)+(p.ldiffSide==="出口側"?Number(p.ldiffAmt||0):0); const inLdisp=p.ldiffSide==="入口側"?inL+Number(p.ldiffAmt||0):inL; return `${t} W${p.width||"-"}×H${p.height||"-"} 内R${p.r||"-"} 入口L${inLdisp} 出口L${outL}`;}
+  return t;
+};
+
+const SlipScreen = ({slip,setSlip,system,ctx,onAddPart,onEditPart,onBack,breadcrumb}) => {
+  const parts=slip.parts||[];
+  const move=(idx,dir)=>{
+    const arr=[...parts],t=idx+dir;
+    if(t<0||t>=arr.length)return;
+    [arr[idx],arr[t]]=[arr[t],arr[idx]];
+    setSlip(s=>({...s,parts:arr}));
+  };
+  return (
+    <div className="min-h-screen bg-gray-100 flex flex-col">
+      <TopBar title="伝票作成" onBack={onBack}/>
+      <BreadCrumb parts={breadcrumb}/>
+      <div className="flex-1 overflow-y-auto p-4">
+        {system&&(
+          <div className="bg-blue-50 border border-blue-200 rounded-xl px-4 py-3 mb-3 text-sm text-blue-800">
+            <span className="font-bold">{system.name}</span>　板厚:{system.thickness}　{system.flange}　{system.seam}　リブ:{system.rib}
+          </div>
+        )}
+        <SectionTitle>部材一覧（{parts.length} / 12）</SectionTitle>
+        {parts.length===0&&<div className="text-center text-gray-400 py-6 text-sm">部材がありません</div>}
+        {parts.map((p,i)=>(
+          <div key={i} className="bg-white rounded-xl shadow mb-2 flex items-center gap-2 px-3 py-3">
+            <div className="flex flex-col gap-1 mr-1">
+              <button onClick={()=>move(i,-1)} className="text-gray-400 text-xl leading-none">▲</button>
+              <button onClick={()=>move(i,1)}  className="text-gray-400 text-xl leading-none">▼</button>
+            </div>
+            <div className="text-xs text-gray-500 font-bold w-6">{i+1}</div>
+            <div className="flex-1">
+              <div className="text-sm font-bold text-gray-800">{pLabel(p)}</div>
+              <div className="text-xs text-gray-500">数量:{p.qty||1}</div>
+            </div>
+            <BtnSub onClick={()=>onEditPart(p,i)} className="text-sm py-2 px-3">編集</BtnSub>
+            <BtnDanger onClick={()=>setSlip(s=>({...s,parts:s.parts.filter((_,j)=>j!==i)}))}>削除</BtnDanger>
+          </div>
+        ))}
+        {parts.length<12&&(
+          <button onClick={onAddPart}
+            className="w-full border-2 border-dashed border-blue-300 rounded-xl py-4 text-blue-600 font-bold text-base active:bg-blue-50 mb-3">
+            ＋ 部材を追加
+          </button>
+        )}
+        <Card>
+          <SectionTitle>伝票情報</SectionTitle>
+          {[["日付","date"],["伝票No.","slipNo"],["製作社名","manufacturer"],
+            ["取付社名","installer"],["担当者","staff"],["納期","dueDate"]].map(([lbl,key])=>(
+            <TxtField key={key} label={lbl} value={slip[key]||""}
+              onChange={v=>setSlip(s=>({...s,[key]:v}))} placeholder={lbl}/>
+          ))}
+        </Card>
+        <button onClick={()=>generatePDF(slip,system,ctx)}
+          className="w-full py-5 bg-green-700 text-white text-xl font-extrabold rounded-2xl shadow-lg active:bg-green-900 mb-4">
+          📄 PDF出力・工場へ送信
+        </button>
+      </div>
+    </div>
+  );
+};
+
+// ─── SVG寸法図 ───────────────────────────────────────────────────
+// 共通スタイル
+const SVG_STROKE = "#1e3a5f";
+const SVG_DIM    = "#c00";      // 寸法線色
+const SVG_FILL   = "#dbeafe";   // ダクト塗り
+const SVG_TXT    = { fontSize:"20", fontFamily:"sans-serif", fill:SVG_DIM, fontWeight:"bold" };
+const SVG_LABEL  = { fontSize:"17", fontFamily:"sans-serif", fill:"#444" };
+
+// 矢印付き寸法線ヘルパー（水平）
+const DimH = ({x1,y1,x2,label,offset=0}) => {
+  const y = y1 + offset;
+  const mx = (x1+x2)/2;
+  return (
+    <g>
+      <line x1={x1} y1={y} x2={x2} y2={y} stroke={SVG_DIM} strokeWidth="1" markerEnd="url(#arr)" markerStart="url(#arr)"/>
+      <text x={mx} y={y-3} textAnchor="middle" {...SVG_TXT}>{label}</text>
+    </g>
+  );
+};
+// 矢印付き寸法線（垂直）
+const DimV = ({x1,y1,y2,label,offset=0}) => {
+  const x = x1 + offset;
+  const my = (y1+y2)/2;
+  return (
+    <g>
+      <line x1={x} y1={y1} x2={x} y2={y2} stroke={SVG_DIM} strokeWidth="1" markerEnd="url(#arr)" markerStart="url(#arr)"/>
+      <text x={x-4} y={my} textAnchor="end" dominantBaseline="middle" {...SVG_TXT}>{label}</text>
+    </g>
+  );
+};
+// 引出し線（補助線）
+const ExtLine = ({x1,y1,x2,y2}) => (
+  <line x1={x1} y1={y1} x2={x2} y2={y2} stroke={SVG_DIM} strokeWidth="0.6" strokeDasharray="3,2"/>
+);
+
+
+// オフセット方向を正規化（DNと矢印方向から実際の上下を求める）
+// 100DN→ と 100UP← は同じ形状（進行方向に対してDNは下がる）
+// 図は「→」方向が標準。「←」なら反転。
+function normalizeElbowOffset(amt, dir, arrow) {
+  if(!amt) return null;
+  // 矢印が← の場合、DNとUPを反転して統一
+  const effectiveDir = (arrow === "←" && dir === "DN") ? "UP"
+                     : (arrow === "←" && dir === "UP") ? "DN"
+                     : dir;
+  return { amt: Number(amt)||0, dir: effectiveDir || "DN", arrow: arrow || "→" };
+}
+
+// SVGラッパー（矢印マーカー定義込み）
+const SvgWrap = ({w=280,h=160,mirror=false,children}) => (
+  <svg viewBox={`0 0 ${w} ${h}`} width="100%"
+    style={{display:"block", maxWidth:"100%"}}
+    xmlns="http://www.w3.org/2000/svg">
+    <defs>
+      <marker id="arr" markerWidth="6" markerHeight="6" refX="3" refY="3" orient="auto">
+        <path d="M0,0 L6,3 L0,6 Z" fill={SVG_DIM}/>
+      </marker>
+      <marker id="arr-blue" markerWidth="6" markerHeight="6" refX="3" refY="3" orient="auto">
+        <path d="M0,0 L6,3 L0,6 Z" fill="#1e3a8a"/>
+      </marker>
+    </defs>
+    {mirror
+      ? <g transform={`scale(-1,1) translate(${-w},0)`}>{children}</g>
+      : children
+    }
+  </svg>
+);
+
+// ミラー時にテキストを水平反転補正するコンポーネント
+// mirror時: 位置補正 + textAnchor を end⇔start 反転して外側に配置
+const MT = ({x,y,mirror,children,textAnchor,...props}) => {
+  if(!mirror) return <text x={x} y={y} textAnchor={textAnchor} {...props}>{children}</text>;
+  const flipped = textAnchor==="end" ? "start" : textAnchor==="start" ? "end" : "middle";
+  return <text x={x} y={y} textAnchor={flipped} transform={`scale(-1,1) translate(${-2*x},0)`} {...props}>{children}</text>;
+};
+
+// ── 直管 ──────────────────────────────────────────────────────────
+const SvgStraight = ({W,H,L}) => {
+  const wl = W||"W", hl = H||"H", ll = L||"L";
+  const f = 10; // フランジはみ出し量
+
+  // 寸法余白
+  const padL = Math.max(70, (String(wl).length + String(hl).length + 3) * 9 + 30);
+  const padR = 20, padT = 40, padB = 55;
+  const rw = 200, rh = 70;
+  const x0 = padL, x1 = x0 + rw;
+  const y0 = padT, y1 = y0 + rh;
+  const svgW = x1 + padR;
+  const svgH = y1 + padB;
+
+  return (
+    <SvgWrap w={svgW} h={svgH}>
+      {/* ダクト本体 */}
+      <rect x={x0} y={y0} width={rw} height={rh} fill={SVG_FILL} stroke={SVG_STROKE} strokeWidth="2"/>
+      {/* 断面ハッチ（左面） */}
+      <rect x={x0} y={y0} width={10} height={rh} fill="#93c5fd" stroke={SVG_STROKE} strokeWidth="1.5"/>
+      {/* 断面ハッチ（右面） */}
+      <rect x={x1-10} y={y0} width={10} height={rh} fill="#93c5fd" stroke={SVG_STROKE} strokeWidth="1.5"/>
+
+      {/* フランジ 左（垂直にはみ出す） */}
+      <line x1={x0} y1={y0-f} x2={x0} y2={y0+f} stroke={SVG_STROKE} strokeWidth="2"/>
+      <line x1={x0} y1={y1-f} x2={x0} y2={y1+f} stroke={SVG_STROKE} strokeWidth="2"/>
+      {/* フランジ 右（垂直にはみ出す） */}
+      <line x1={x1} y1={y0-f} x2={x1} y2={y0+f} stroke={SVG_STROKE} strokeWidth="2"/>
+      <line x1={x1} y1={y1-f} x2={x1} y2={y1+f} stroke={SVG_STROKE} strokeWidth="2"/>
+
+      {/* L 寸法（水平） */}
+      <ExtLine x1={x0} y1={y1+4} x2={x0} y2={y1+24}/>
+      <ExtLine x1={x1} y1={y1+4} x2={x1} y2={y1+24}/>
+      <DimH x1={x0} y1={y1+22} x2={x1} label={`L=${ll}`}/>
+
+      {/* H 寸法（垂直・左側） */}
+      <ExtLine x1={x0-4} y1={y0} x2={x0-padL+8} y2={y0}/>
+      <ExtLine x1={x0-4} y1={y1} x2={x0-padL+8} y2={y1}/>
+      <DimV x1={x0-18} y1={y0} y2={y1} label={`H=${hl}`}/>
+
+      {/* W×H ラベル（図中央） */}
+      <text x={x0+rw/2} y={y0+rh/2-10} textAnchor="middle" fontSize="17" fontFamily="sans-serif" fill="#1e3a8a" fontWeight="bold">W{wl}</text>
+      <text x={x0+rw/2} y={y0+rh/2+8}  textAnchor="middle" fontSize="17" fontFamily="sans-serif" fill="#1e3a8a" fontWeight="bold">×H{hl}</text>
+    </SvgWrap>
+  );
+};
+
+
+// ── 内R違いエルボ（角度指定）────────────────────────────────────
+// 45°エルボと同じ座標系を90°回転させた版
+// 入口 = 水平左（ox-ros,oy）→（ox,oy）
+// 出口 = 角度θ方向（ox+ros*cosT方向ではなく、弧終端）
+// 中心 = (ox, oy)
+// 内弧: (ox-rs, oy) → θ度回転後の点
+// 外弧: (ox-ros, oy) → θ度回転後の点
+const SvgElbowRdiff = ({W, H, R, ang="90", ldiffAmt="", ldiffSide="出口側", mirror=false}) => {
+  const wl = W||"W", hl = H||"H", rl = R||"R";
+  const w  = Math.max(Number(W)||100, 1);
+  const r  = Math.max(Number(R)||0,   0);
+  const cf = Math.max(Number(ldiffAmt)||0, 0);
+  const BF = r + cf;
+  const theta = Math.max(1, Math.min(359, Number(ang)||90));
+  const rad = theta * Math.PI / 180;
+  // 入口=水平(0°)、出口=θ度（反時計回り）
+  // 入口側: 水平左 → (ox-r, oy) start
+  // 出口側: θ回転 → (ox - r*cos(θ), oy - r*sin(θ)) end
+  const SIN = Math.sin(rad), COS = Math.cos(rad);
+  const largeArc = theta > 180 ? 1 : 0;
+
+  const rs  = Math.max(Math.round(r * Math.min(200/(r+w+cf*2), 2.0)), 0);
+  const ws  = Math.round(w * Math.min(200/(r+w+cf*2), 2.0));
+  const ros = rs + ws;
+  const scale = Math.min(200/(r+w+cf*2), 2.0);
+  const CFs = Math.round(cf * scale);
+
+  const pad = 20;
+  const dimR = Math.max(200, (String(wl).length+String(hl).length+4)*11+120);
+  const dimB = cf>0 ? 90 : 65;
+  const fln = 8;
+
+  // θ>90°では弧が右にもはみ出す → 右余白追加
+  const rightExt = theta > 90 ? Math.round(ros * Math.max(0, Math.sin(rad - Math.PI/2))) : 0;
+  // θ<90°では出口が斜め上に行くだけで上限は ros → 追加余白なし
+  // θ>90°かつ180°超えると出口が下向きになるので oy の余白は標準で十分
+  const ox = pad + ros + Math.max(0, rightExt);
+  const oy = pad + ros;
+
+  // 弧端点
+  // 入口側（水平左）: 中心(ox,oy)から左にr/ros
+  const iIn = { x: ox - rs,  y: oy };  // 内弧 入口端
+  const eIn = { x: ox - ros, y: oy };  // 外弧 入口端
+
+  // 出口側（θ度方向）: 中心から角度(π-θ)方向（SVGはY下向き）
+  // θ=90°: 真上 → (ox, oy-r)
+  // θ=45°: 左上45° → (ox-r*cos45, oy-r*sin45)
+  const iOut = { x: Math.round(ox - rs*COS),  y: Math.round(oy - rs*SIN)  };
+  const eOut = { x: Math.round(ox - ros*COS), y: Math.round(oy - ros*SIN) };
+
+  // 延長点（出口端線に垂直な外向き方向に延長）
+  // 出口端線 iOut→eOut の方向ベクトル: (edx, edy)
+  // 外向き法線（弧の外側 = 左手方向）: (-edy/elen, edx/elen)
+  const edx = eOut.x - iOut.x, edy = eOut.y - iOut.y;
+  const elen = Math.sqrt(edx*edx+edy*edy)||1;
+  // 90°の場合: iOut=(ox,oy-rs), eOut=(ox,oy-ros) → edx=0,edy=-(ros-rs)<0
+  // 法線 = (-(-edy)/elen, edx/elen) = (edy<0→正, 0) → 右方向
+  // ただし「外向き」= 弧の外側へ。入口が左なので出口の外向きは右(+x)方向
+  const extX = -edy/elen;  // 外向き法線 x
+  const extY =  edx/elen;  // 外向き法線 y
+  const iOutF = { x: Math.round(iOut.x + CFs*extX), y: Math.round(iOut.y + CFs*extY) };
+  const eOutF = { x: Math.round(eOut.x + CFs*extX), y: Math.round(eOut.y + CFs*extY) };
+
+  // 入口延長（左方向）
+  const CF_inlet = ldiffSide==="入口側" ? cf : 0;
+  const CFis = Math.round(CF_inlet * scale);
+  const inletExt = cf>0 && ldiffSide==="入口側";
+
+  // svgW: 弧が左に広がる(ox-ros〜ox)、寸法ラベルは右(rxBase)側に伸びる
+  const rxBase = Math.max(iOut.x, eOut.x, cf>0?iOutF.x:0, cf>0?eOutF.x:0, ox);
+  const svgW = rxBase + dimR + 20;
+  // svgH: 上方向に弧が伸びる(oy-ros)、下方向にCFis+dimB
+  const svgH = oy + CFis + dimB;
+  const mx = mirror;
+
+  return (
+    <SvgWrap w={svgW} h={svgH} mirror={mx}>
+      {/* 塗り */}
+      <path d={inletExt
+        ? `M${eIn.x},${oy+CFis} L${eIn.x},${eIn.y} A${ros},${ros} 0 ${largeArc},1 ${eOut.x},${eOut.y} L${iOut.x},${iOut.y} A${rs},${rs} 0 ${largeArc},0 ${iIn.x},${iIn.y} L${iIn.x},${oy+CFis} Z`
+        : `M${eIn.x},${oy} L${eIn.x},${eIn.y} A${ros},${ros} 0 ${largeArc},1 ${cf>0?eOutF.x:eOut.x},${cf>0?eOutF.y:eOut.y} L${cf>0?iOutF.x:iOut.x},${cf>0?iOutF.y:iOut.y} A${rs},${rs} 0 ${largeArc},0 ${iIn.x},${iIn.y} L${iIn.x},${oy} Z`}
+        fill={SVG_FILL} stroke="none"/>
+
+      {/* 外弧 */}
+      <path d={`M${eIn.x},${eIn.y} A${ros},${ros} 0 ${largeArc},1 ${eOut.x},${eOut.y}`}
+        fill="none" stroke={SVG_STROKE} strokeWidth="2"/>
+      {/* 内弧 */}
+      <path d={`M${iIn.x},${iIn.y} A${rs},${rs} 0 ${largeArc},1 ${iOut.x},${iOut.y}`}
+        fill="none" stroke={SVG_STROKE} strokeWidth="2"/>
+
+      {/* 入口端線（垂直）: 延長なし時のみ */}
+      {!inletExt && <line x1={eIn.x} y1={oy} x2={iIn.x} y2={oy} stroke={SVG_STROKE} strokeWidth="2"/>}
+      {/* 入口延長 */}
+      {inletExt && <>
+        <line x1={eIn.x} y1={oy} x2={eIn.x} y2={oy+CFis} stroke={SVG_STROKE} strokeWidth="2"/>
+        <line x1={iIn.x} y1={oy} x2={iIn.x} y2={oy+CFis} stroke={SVG_STROKE} strokeWidth="2"/>
+        <line x1={eIn.x} y1={oy+CFis} x2={iIn.x} y2={oy+CFis} stroke={SVG_STROKE} strokeWidth="2"/>
+      </>}
+
+      {/* 出口端線 or 延長 */}
+      {cf>0&&ldiffSide==="出口側" ? <>
+        <line x1={iOut.x} y1={iOut.y} x2={iOutF.x} y2={iOutF.y} stroke={SVG_STROKE} strokeWidth="2"/>
+        <line x1={eOut.x} y1={eOut.y} x2={eOutF.x} y2={eOutF.y} stroke={SVG_STROKE} strokeWidth="2"/>
+        <line x1={iOutF.x} y1={iOutF.y} x2={eOutF.x} y2={eOutF.y} stroke={SVG_STROKE} strokeWidth="2"/>
+      </> : <line x1={iOut.x} y1={iOut.y} x2={eOut.x} y2={eOut.y} stroke={SVG_STROKE} strokeWidth="2"/>}
+
+      {/* フランジ 入口 */}
+      {inletExt ? <>
+        <line x1={eIn.x-fln} y1={oy+CFis} x2={eIn.x+fln} y2={oy+CFis} stroke={SVG_STROKE} strokeWidth="2"/>
+        <line x1={iIn.x-fln} y1={oy+CFis} x2={iIn.x+fln} y2={oy+CFis} stroke={SVG_STROKE} strokeWidth="2"/>
+      </> : <>
+        <line x1={eIn.x-fln} y1={oy} x2={eIn.x+fln} y2={oy} stroke={SVG_STROKE} strokeWidth="2"/>
+        <line x1={iIn.x-fln} y1={oy} x2={iIn.x+fln} y2={oy} stroke={SVG_STROKE} strokeWidth="2"/>
+      </>}
+      {/* フランジ 出口（端線に平行） */}
+      {cf>0&&ldiffSide==="出口側" ? <>
+        <line x1={iOutF.x-edx/elen*fln} y1={iOutF.y-edy/elen*fln} x2={iOutF.x+edx/elen*fln} y2={iOutF.y+edy/elen*fln} stroke={SVG_STROKE} strokeWidth="2"/>
+        <line x1={eOutF.x-edx/elen*fln} y1={eOutF.y-edy/elen*fln} x2={eOutF.x+edx/elen*fln} y2={eOutF.y+edy/elen*fln} stroke={SVG_STROKE} strokeWidth="2"/>
+      </> : <>
+        <line x1={iOut.x-edx/elen*fln} y1={iOut.y-edy/elen*fln} x2={iOut.x+edx/elen*fln} y2={iOut.y+edy/elen*fln} stroke={SVG_STROKE} strokeWidth="2"/>
+        <line x1={eOut.x-edx/elen*fln} y1={eOut.y-edy/elen*fln} x2={eOut.x+edx/elen*fln} y2={eOut.y+edy/elen*fln} stroke={SVG_STROKE} strokeWidth="2"/>
+      </>}
+
+      {/* ── 右辺寸法 ── */}
+      <line x1={rxBase+4} y1={eOut.y} x2={rxBase+dimR} y2={eOut.y} stroke={SVG_DIM} strokeWidth="0.8" strokeDasharray="3,2"/>
+      <line x1={rxBase+4} y1={iOut.y} x2={rxBase+dimR} y2={iOut.y} stroke={SVG_DIM} strokeWidth="0.8" strokeDasharray="3,2"/>
+      <line x1={rxBase+4} y1={oy}     x2={rxBase+dimR} y2={oy}     stroke={SVG_DIM} strokeWidth="0.8" strokeDasharray="3,2"/>
+      <line x1={rxBase+22} y1={eOut.y} x2={rxBase+22} y2={iOut.y} stroke={SVG_DIM} strokeWidth="1.2" markerEnd="url(#arr)" markerStart="url(#arr)"/>
+      <MT x={rxBase+28} y={(eOut.y+iOut.y)/2-10} fontSize="17" fontFamily="sans-serif" fill="#1e3a8a" fontWeight="bold" textAnchor="start" mirror={mx}>W{wl}</MT>
+      <MT x={rxBase+28} y={(eOut.y+iOut.y)/2+10} fontSize="17" fontFamily="sans-serif" fill="#1e3a8a" fontWeight="bold" textAnchor="start" mirror={mx}>×H{hl}</MT>
+      <line x1={rxBase+22} y1={iOut.y} x2={rxBase+22} y2={oy} stroke={SVG_DIM} strokeWidth="1.2" markerEnd="url(#arr)" markerStart="url(#arr)"/>
+      <MT x={rxBase+28} y={(iOut.y+oy)/2} dominantBaseline="middle" fontSize="15" fontFamily="sans-serif" fill={SVG_DIM} fontWeight="bold" textAnchor="start" mirror={mx}>{rl}</MT>
+
+      {/* ── 底辺寸法 ── */}
+      <line x1={eIn.x}  y1={oy+CFis+4} x2={eIn.x}  y2={oy+CFis+dimB-10} stroke={SVG_DIM} strokeWidth="0.8" strokeDasharray="3,2"/>
+      <line x1={iIn.x}  y1={oy+CFis+4} x2={iIn.x}  y2={oy+CFis+dimB-10} stroke={SVG_DIM} strokeWidth="0.8" strokeDasharray="3,2"/>
+      <line x1={iOut.x} y1={oy+CFis+4} x2={iOut.x} y2={oy+CFis+dimB-10} stroke={SVG_DIM} strokeWidth="0.8" strokeDasharray="3,2"/>
+      {cf>0&&ldiffSide==="出口側"&&<line x1={iOutF.x} y1={oy+4} x2={iOutF.x} y2={oy+dimB-10} stroke={SVG_DIM} strokeWidth="0.8" strokeDasharray="3,2"/>}
+      <line x1={eIn.x} y1={oy+CFis+20} x2={iIn.x} y2={oy+CFis+20} stroke={SVG_DIM} strokeWidth="1.2" markerEnd="url(#arr)" markerStart="url(#arr)"/>
+      <MT x={(eIn.x+iIn.x)/2} y={oy+CFis+34} textAnchor="middle" fontSize="16" fill={SVG_DIM} fontWeight="bold" fontFamily="sans-serif" mirror={mx}>{wl}</MT>
+      <line x1={iIn.x} y1={oy+CFis+20} x2={iOut.x} y2={oy+CFis+20} stroke={SVG_DIM} strokeWidth="1.2" markerEnd="url(#arr)" markerStart="url(#arr)"/>
+      <MT x={(iIn.x+iOut.x)/2} y={oy+CFis+34} textAnchor="middle" fontSize="16" fill={SVG_DIM} fontWeight="bold" fontFamily="sans-serif" mirror={mx}>{rl}</MT>
+      {cf>0&&ldiffSide==="出口側"&&<>
+        <line x1={iOut.x} y1={oy+20} x2={iOutF.x} y2={oy+20} stroke={SVG_DIM} strokeWidth="1.2" markerEnd="url(#arr)" markerStart="url(#arr)"/>
+        <MT x={(iOut.x+iOutF.x)/2} y={oy+34} textAnchor="middle" fontSize="15" fill={SVG_DIM} fontWeight="bold" fontFamily="sans-serif" mirror={mx}>{cf}</MT>
+        <line x1={iIn.x} y1={oy+56} x2={iOutF.x} y2={oy+56} stroke={SVG_DIM} strokeWidth="1.2" markerEnd="url(#arr)" markerStart="url(#arr)"/>
+        <MT x={(iIn.x+iOutF.x)/2} y={oy+70} textAnchor="middle" fontSize="15" fill={SVG_DIM} fontWeight="bold" fontFamily="sans-serif" mirror={mx}>{BF}</MT>
+      </>}
+
+      {/* 中央注記 */}
+      <MT x={ox-rs*0.5+10} y={oy-rs*0.5} fontSize="15" fontFamily="sans-serif" fill="#333" fontWeight="bold" mirror={mx}>角度{theta}°</MT>
+      <MT x={ox-rs*0.5+10} y={oy-rs*0.5+18} fontSize="15" fontFamily="sans-serif" fill="#333" fontWeight="bold" mirror={mx}>内R {rl}</MT>
+    </SvgWrap>
+  );
+};
+
+
+// ── 内L違いエルボ ──────────────────────────────────────────────
+// 定義に従い数学的に拘束された描画
+// 座標系: B=(0,0)原点、SVGはY下向きなので上方向はY減算
+//
+// 内弧: center=(0, BC)→SVG: (Bx, By-BCs), r=BCs
+//   start=B=(Bx, By), end=C=(Bx+BCs, By-BCs)
+//   SVG arc: A BCs BCs 0 0,0  ← sweep=0(反時計)でB→C
+//
+// 外弧: center=(0, BC)→SVG同じ, r=BCs+Hs
+//   start=Atop=(Bx-ABs, By-BCs-Hs), end=D=(Bx+BCs, By-BCs-Hs)
+//   SVG arc: A outerRs outerRs 0 0,0
+//
+// 検証(例 AB=400,BC=200,CF=150,H=300):
+//   Bx=padL+400s, By=padT+500s
+//   B=(Bx,By), A=(Bx-400s,By), C=(Bx+200s,By-200s)
+//   F=(Bx+350s,By-200s), D=(Bx+200s,By-500s), E=(Bx+350s,By-500s)
+//   Atop=(Bx-400s,By-500s)
+const SvgElbowLdiff = ({W, H, R, ldiffAmt="", ldiffSide="出口側", mirror=false}) => {
+  const wl = W||"W", hl = H||"H", rl = R||"R";
+  const AB = Math.max(Number(W)||100, 1);  // 入口直線
+  const BC = Math.max(Number(R)||50,  1);  // 内R
+  const CF = Math.max(Number(ldiffAmt)||0, 0); // 延長
+  const BF = BC + CF;
+  const Hv = Math.max(Number(H)||100, 1);  // ダクト高さ（W×H表示用）
+  const outerR = BC + AB;                  // 外R = BC + W（内R + 入口直線長）
+
+  const CF_outlet = ldiffSide==="出口側" ? CF : 0; // 出口側延長（C→F水平）
+  const CF_inlet  = ldiffSide==="入口側" ? CF : 0; // 入口側延長（A,B下垂直）
+
+  // スケール
+  const totalW = AB + BC + CF_outlet;
+  const totalH = outerR + CF_inlet; // 入口側は下に伸びる
+  const scale  = Math.min(220/Math.max(totalW,1), 200/Math.max(totalH,1), 2.0);
+
+  const ABs      = Math.round(AB         * scale);
+  const BCs      = Math.round(BC         * scale);
+  const CFs      = Math.round(CF_outlet  * scale); // 出口側延長px
+  const CFis     = Math.round(CF_inlet   * scale); // 入口側垂直延長px
+  const outerRs  = BCs + ABs;
+
+  const padL = 20, padT = 20;
+  const dimR = Math.max(200, (String(wl).length+String(hl).length+4)*11+120);
+  const dimB = CF > 0 ? 90 : 65;
+  const fln  = 8;
+
+  // B のSVG座標
+  const Bx = padL + ABs;
+  const By = padT + outerRs;
+
+  // 各点のSVG座標
+  // 入口側延長: A,Bが下にCFis分伸びる
+  const ptA    = { x: Bx - ABs, y: By       }; // A（弧の水平端）
+  const ptAext = { x: Bx - ABs, y: By+CFis  }; // 入口側延長端（Aの下）
+  const ptB    = { x: Bx,       y: By       }; // B（弧の水平端）
+  const ptBext = { x: Bx,       y: By+CFis  }; // 入口側延長端（Bの下）
+  const ptC    = { x: Bx + BCs, y: By - BCs }; // C
+  const ptF    = { x: Bx + BCs + CFs, y: By - BCs }; // F（出口側延長端）
+  const ptD    = { x: Bx + BCs, y: By - outerRs };
+  const ptE    = { x: Bx + BCs + CFs, y: By - outerRs };
+  const ptAtop = { x: Bx - ABs, y: By - outerRs };
+
+  // 弧の中心SVG座標
+  // center=(0,BC)→SVG: (Bx, By-BCs)
+  // ※ 確認: center→B の距離 = sqrt((Bx-(Bx))^2+(By-(By-BCs))^2) = BCs ✓
+  // ※ 確認: center→C の距離 = sqrt((Bx+BCs-Bx)^2+(By-BCs-(By-BCs))^2) = BCs ✓
+
+  // 入口側: A,Bが下に伸びる
+  const inletExt = CF>0 && ldiffSide==="入口側";
+
+  const svgW = Math.max(CF>0&&ldiffSide==="出口側"?ptF.x:ptC.x, ptD.x) + dimR;
+  const svgH = By + CFis + dimB;
+  const mx   = mirror;
+  const rx   = CF>0&&ldiffSide==="出口側" ? ptE.x : ptD.x;
+
+  return (
+    <SvgWrap w={svgW} h={svgH} mirror={mx}>
+      {/* 塗り */}
+      <path d={inletExt
+        ? `M${ptAext.x},${ptAext.y} L${ptBext.x},${ptBext.y} L${ptB.x},${ptB.y} A${BCs},${BCs} 0 0,1 ${ptC.x},${ptC.y} L${ptC.x},${ptC.y} L${ptD.x},${ptD.y} A${outerRs},${outerRs} 0 0,0 ${ptA.x},${ptA.y} L${ptAext.x},${ptAext.y} Z`
+        : `M${ptA.x},${ptA.y} L${ptB.x},${ptB.y} A${BCs},${BCs} 0 0,1 ${ptC.x},${ptC.y} L${ptF.x},${ptF.y} L${ptE.x},${ptE.y} L${ptD.x},${ptD.y} A${outerRs},${outerRs} 0 0,0 ${ptA.x},${ptA.y} Z`}
+        fill={SVG_FILL} stroke="none"/>
+
+      {/* 内弧: B→C */}
+      <path d={`M${ptB.x},${ptB.y} A${BCs},${BCs} 0 0,1 ${ptC.x},${ptC.y}`}
+        fill="none" stroke={SVG_STROKE} strokeWidth="2"/>
+
+      {/* 外弧: D→fillLeft */}
+      <path d={`M${ptD.x},${ptD.y} A${outerRs},${outerRs} 0 0,0 ${ptA.x},${ptA.y}`}
+        fill="none" stroke={SVG_STROKE} strokeWidth="2"/>
+
+      {/* 入口直線 A→B（延長なし時のみ） */}
+      {!inletExt && <line x1={ptA.x} y1={ptA.y} x2={ptB.x} y2={ptB.y} stroke={SVG_STROKE} strokeWidth="2"/>}
+      {/* 入口側垂直延長: A下・B下・底辺 */}
+      {inletExt && <>
+        <line x1={ptA.x} y1={ptA.y} x2={ptAext.x} y2={ptAext.y} stroke={SVG_STROKE} strokeWidth="2"/>
+        <line x1={ptB.x} y1={ptB.y} x2={ptBext.x} y2={ptBext.y} stroke={SVG_STROKE} strokeWidth="2"/>
+        <line x1={ptAext.x} y1={ptAext.y} x2={ptBext.x} y2={ptBext.y} stroke={SVG_STROKE} strokeWidth="2"/>
+      </>}
+
+      {/* 出口側延長: C→F, F↕E, D→E */}
+      {CF>0 && ldiffSide==="出口側" && <>
+        <line x1={ptC.x} y1={ptC.y} x2={ptF.x} y2={ptF.y} stroke={SVG_STROKE} strokeWidth="2"/>
+        <line x1={ptF.x} y1={ptF.y} x2={ptE.x} y2={ptE.y} stroke={SVG_STROKE} strokeWidth="2"/>
+        <line x1={ptD.x} y1={ptD.y} x2={ptE.x} y2={ptE.y} stroke={SVG_STROKE} strokeWidth="2"/>
+      </>}
+      {/* 延長なし or 入口側: C/D端線 */}
+      {(CF===0 || ldiffSide==="入口側") && <line x1={ptC.x} y1={ptC.y} x2={ptD.x} y2={ptD.y} stroke={SVG_STROKE} strokeWidth="2"/>}
+
+      {/* フランジ A側 */}
+      {inletExt
+        ? <><line x1={ptAext.x-fln} y1={ptAext.y} x2={ptAext.x+fln} y2={ptAext.y} stroke={SVG_STROKE} strokeWidth="2"/>
+           <line x1={ptBext.x-fln} y1={ptBext.y} x2={ptBext.x+fln} y2={ptBext.y} stroke={SVG_STROKE} strokeWidth="2"/></>
+        : <><line x1={ptA.x-fln} y1={ptA.y} x2={ptA.x+fln} y2={ptA.y} stroke={SVG_STROKE} strokeWidth="2"/>
+           <line x1={ptAtop.x-fln} y1={ptAtop.y} x2={ptAtop.x+fln} y2={ptAtop.y} stroke={SVG_STROKE} strokeWidth="2"/></>
+      }
+      {/* フランジ 出口端 */}
+      {CF>0 && ldiffSide==="出口側" ? <>
+        <line x1={ptF.x} y1={ptF.y-fln} x2={ptF.x} y2={ptF.y+fln} stroke={SVG_STROKE} strokeWidth="2"/>
+        <line x1={ptE.x} y1={ptE.y-fln} x2={ptE.x} y2={ptE.y+fln} stroke={SVG_STROKE} strokeWidth="2"/>
+      </> : <>
+        <line x1={ptC.x} y1={ptC.y-fln} x2={ptC.x} y2={ptC.y+fln} stroke={SVG_STROKE} strokeWidth="2"/>
+        <line x1={ptD.x} y1={ptD.y-fln} x2={ptD.x} y2={ptD.y+fln} stroke={SVG_STROKE} strokeWidth="2"/>
+      </>}
+
+      {/* ── 右辺寸法 ── */}
+      {/* 引出し破線 */}
+      <line x1={rx+4} y1={CF>0&&ldiffSide==="出口側"?ptE.y:ptD.y} x2={rx+dimR-8} y2={CF>0&&ldiffSide==="出口側"?ptE.y:ptD.y} stroke={SVG_DIM} strokeWidth="0.8" strokeDasharray="3,2"/>
+      <line x1={rx+4} y1={ptD.y} x2={rx+dimR-8} y2={ptD.y} stroke={SVG_DIM} strokeWidth="0.8" strokeDasharray="3,2"/>
+      <line x1={rx+4} y1={ptC.y} x2={rx+dimR-8} y2={ptC.y} stroke={SVG_DIM} strokeWidth="0.8" strokeDasharray="3,2"/>
+      <line x1={rx+4} y1={By}    x2={rx+dimR-8} y2={By}    stroke={SVG_DIM} strokeWidth="0.8" strokeDasharray="3,2"/>
+      {/* W×H */}
+      <line x1={rx+22} y1={CF>0&&ldiffSide==="出口側"?ptE.y:ptD.y} x2={rx+22} y2={ptC.y} stroke={SVG_DIM} strokeWidth="1.2" markerEnd="url(#arr)" markerStart="url(#arr)"/>
+      <MT x={rx+28} y={((CF>0&&ldiffSide==="出口側"?ptE.y:ptD.y)+ptC.y)/2-10} fontSize="17" fontFamily="sans-serif" fill="#1e3a8a" fontWeight="bold" textAnchor="start" mirror={mx}>W{wl}</MT>
+      <MT x={rx+28} y={((CF>0&&ldiffSide==="出口側"?ptE.y:ptD.y)+ptC.y)/2+10} fontSize="17" fontFamily="sans-serif" fill="#1e3a8a" fontWeight="bold" textAnchor="start" mirror={mx}>×H{hl}</MT>
+      {/* BF間 C→By */}
+      <line x1={rx+22} y1={ptC.y} x2={rx+22} y2={By} stroke={SVG_DIM} strokeWidth="1.2" markerEnd="url(#arr)" markerStart="url(#arr)"/>
+      <MT x={rx+28} y={(ptC.y+By)/2} dominantBaseline="middle" fontSize="15" fontFamily="sans-serif" fill={SVG_DIM} fontWeight="bold" textAnchor="start" mirror={mx}>{rl}</MT>
+      {/* 入口側延長: 右辺にCF（By〜Bext） */}
+      {inletExt && <>
+        <line x1={rx+4} y1={By+CFis} x2={rx+dimR-8} y2={By+CFis} stroke={SVG_DIM} strokeWidth="0.8" strokeDasharray="3,2"/>
+        <line x1={rx+22} y1={By} x2={rx+22} y2={By+CFis} stroke={SVG_DIM} strokeWidth="1.2" markerEnd="url(#arr)" markerStart="url(#arr)"/>
+        <MT x={rx+28} y={By+CFis/2} dominantBaseline="middle" fontSize="15" fontFamily="sans-serif" fill={SVG_DIM} fontWeight="bold" textAnchor="start" mirror={mx}>{CF}</MT>
+      </>}
+
+      {/* ── 底辺寸法 ── */}
+      {/* 引出し破線 */}
+      <line x1={ptA.x}  y1={By+CFis+4} x2={ptA.x}  y2={By+CFis+dimB-10} stroke={SVG_DIM} strokeWidth="0.8" strokeDasharray="3,2"/>
+      <line x1={ptB.x}  y1={By+CFis+4} x2={ptB.x}  y2={By+CFis+dimB-10} stroke={SVG_DIM} strokeWidth="0.8" strokeDasharray="3,2"/>
+      <line x1={ptC.x}  y1={By+CFis+4} x2={ptC.x}  y2={By+CFis+dimB-10} stroke={SVG_DIM} strokeWidth="0.8" strokeDasharray="3,2"/>
+      {CF>0 && ldiffSide==="出口側" && <line x1={ptF.x} y1={By+4} x2={ptF.x} y2={By+dimB-10} stroke={SVG_DIM} strokeWidth="0.8" strokeDasharray="3,2"/>}
+      {/* AB */}
+      <line x1={ptA.x} y1={By+CFis+20} x2={ptB.x} y2={By+CFis+20} stroke={SVG_DIM} strokeWidth="1.2" markerEnd="url(#arr)" markerStart="url(#arr)"/>
+      <MT x={(ptA.x+ptB.x)/2} y={By+CFis+34} textAnchor="middle" fontSize="16" fill={SVG_DIM} fontWeight="bold" fontFamily="sans-serif" mirror={mx}>{wl}</MT>
+      {/* BC */}
+      <line x1={ptB.x} y1={By+CFis+20} x2={ptC.x} y2={By+CFis+20} stroke={SVG_DIM} strokeWidth="1.2" markerEnd="url(#arr)" markerStart="url(#arr)"/>
+      <MT x={(ptB.x+ptC.x)/2} y={By+CFis+34} textAnchor="middle" fontSize="16" fill={SVG_DIM} fontWeight="bold" fontFamily="sans-serif" mirror={mx}>{rl}</MT>
+      {/* 出口側延長: CF と BF下段 */}
+      {CF>0 && ldiffSide==="出口側" && <>
+        <line x1={ptC.x} y1={By+20} x2={ptF.x} y2={By+20} stroke={SVG_DIM} strokeWidth="1.2" markerEnd="url(#arr)" markerStart="url(#arr)"/>
+        <MT x={(ptC.x+ptF.x)/2} y={By+34} textAnchor="middle" fontSize="15" fill={SVG_DIM} fontWeight="bold" fontFamily="sans-serif" mirror={mx}>{CF}</MT>
+        <line x1={ptB.x} y1={By+56} x2={ptF.x} y2={By+56} stroke={SVG_DIM} strokeWidth="1.2" markerEnd="url(#arr)" markerStart="url(#arr)"/>
+        <MT x={(ptB.x+ptF.x)/2} y={By+70} textAnchor="middle" fontSize="15" fill={SVG_DIM} fontWeight="bold" fontFamily="sans-serif" mirror={mx}>{BF}</MT>
+      </>}
+
+      {/* 中央注記 */}
+      <MT x={ptB.x+10} y={By-BCs+20} fontSize="15" fontFamily="sans-serif" fill="#333" fontWeight="bold" mirror={mx}>角度90°</MT>
+      <MT x={ptB.x+10} y={By-BCs+38} fontSize="15" fontFamily="sans-serif" fill="#333" fontWeight="bold" mirror={mx}>内R {rl}</MT>
+    </SvgWrap>
+  );
+};
+
+
+// ── 90°エルボ ──────────────────────────────────────────────────
+const SvgElbow90 = ({W, H, R, offsetAmt="", offsetDir="", offsetArrow="", mirror=false}) => {
+  const wl = W||"W", hl = H||"H", rl = R||"R";
+  const extR = (W && R) ? Number(W)+Number(R) : "W+R";
+
+  // 実寸をpxにスケール（外R=W+R を最大220pxに収める）
+  const wv = Math.max(Number(W)||100, 1);
+  const rv = Math.max(Number(R)||50, 1);
+  const scale = Math.min(220 / (wv + rv), 2.0);
+  const ws = Math.round(wv * scale);
+  const rs = Math.round(rv * scale);
+  const ros = ws + rs;
+
+  // 原点=右下、余白
+  const pad = 20;
+  const dimR = Math.max(180, (String(wl).length + String(hl).length + 4) * 11 + 80);
+  const dimB = 65;
+  const ox = pad + ros, oy = pad + ros;
+  const svgW = ox + dimR;
+  const svgH = oy + dimB;
+  const f = 8; // フランジはみ出し量（固定）
+
+  const mx = mirror;
+  return (
+    <SvgWrap w={svgW} h={svgH} mirror={mx}>
+      {/* 塗り */}
+      <path d={`M ${ox},${oy-ros} A${ros},${ros} 0 0,0 ${ox-ros},${oy} L${ox-rs},${oy} A${rs},${rs} 0 0,1 ${ox},${oy-rs} Z`}
+        fill={SVG_FILL} stroke="none"/>
+      {/* 外弧（中心=ox,oy、半径ros、上→左） */}
+      <path d={`M ${ox},${oy-ros} A${ros},${ros} 0 0,0 ${ox-ros},${oy}`} fill="none" stroke={SVG_STROKE} strokeWidth="2"/>
+      {/* 内弧（中心=ox,oy、半径rs、上→左） */}
+      <path d={`M ${ox},${oy-rs} A${rs},${rs} 0 0,0 ${ox-rs},${oy}`} fill="none" stroke={SVG_STROKE} strokeWidth="2"/>
+      {/* 入口端線（垂直） */}
+      <line x1={ox} y1={oy-ros} x2={ox} y2={oy-rs} stroke={SVG_STROKE} strokeWidth="2"/>
+      {/* 出口端線（水平） */}
+      <line x1={ox-ros} y1={oy} x2={ox-rs} y2={oy} stroke={SVG_STROKE} strokeWidth="2"/>
+      {/* フランジ 入口（垂直にはみ出す） */}
+      <line x1={ox} y1={oy-ros-f} x2={ox} y2={oy-ros+f} stroke={SVG_STROKE} strokeWidth="2"/>
+      <line x1={ox} y1={oy-rs-f}  x2={ox} y2={oy-rs+f}  stroke={SVG_STROKE} strokeWidth="2"/>
+      {/* フランジ 出口（水平にはみ出す） */}
+      <line x1={ox-ros-f} y1={oy} x2={ox-ros+f} y2={oy} stroke={SVG_STROKE} strokeWidth="2"/>
+      <line x1={ox-rs-f}  y1={oy} x2={ox-rs+f}  y2={oy} stroke={SVG_STROKE} strokeWidth="2"/>
+
+      {/* 右辺寸法: W上/R下 */}
+      <line x1={ox} y1={oy-ros} x2={ox+50} y2={oy-ros} stroke={SVG_DIM} strokeWidth="0.8" strokeDasharray="3,2"/>
+      <line x1={ox} y1={oy-rs}  x2={ox+50} y2={oy-rs}  stroke={SVG_DIM} strokeWidth="0.8" strokeDasharray="3,2"/>
+      <line x1={ox} y1={oy}     x2={ox+50} y2={oy}     stroke={SVG_DIM} strokeWidth="0.8" strokeDasharray="3,2"/>
+      <line x1={ox+22} y1={oy-ros} x2={ox+22} y2={oy-rs} stroke={SVG_DIM} strokeWidth="1.2" markerEnd="url(#arr)" markerStart="url(#arr)"/>
+      <MT x={ox+28} y={(oy-ros+oy-rs)/2-10} fontSize="17" fontFamily="sans-serif" fill="#1e3a8a" fontWeight="bold" textAnchor="start" mirror={mx}>W{wl}</MT>
+      <MT x={ox+28} y={(oy-ros+oy-rs)/2+10} fontSize="17" fontFamily="sans-serif" fill="#1e3a8a" fontWeight="bold" textAnchor="start" mirror={mx}>×H{hl}</MT>
+      <line x1={ox+22} y1={oy-rs} x2={ox+22} y2={oy} stroke={SVG_DIM} strokeWidth="1.2" markerEnd="url(#arr)" markerStart="url(#arr)"/>
+      <MT x={ox+28} y={(oy-rs+oy)/2} dominantBaseline="middle" fontSize="16" fontFamily="sans-serif" fill={SVG_DIM} fontWeight="bold" textAnchor="start" mirror={mx}>{rl}</MT>
+
+
+      {/* 底辺寸法: W左/R右 */}
+      <line x1={ox-ros} y1={oy} x2={ox-ros} y2={oy+46} stroke={SVG_DIM} strokeWidth="0.8" strokeDasharray="3,2"/>
+      <line x1={ox-rs}  y1={oy} x2={ox-rs}  y2={oy+46} stroke={SVG_DIM} strokeWidth="0.8" strokeDasharray="3,2"/>
+      <line x1={ox}     y1={oy} x2={ox}     y2={oy+46} stroke={SVG_DIM} strokeWidth="0.8" strokeDasharray="3,2"/>
+      <line x1={ox-ros} y1={oy+20} x2={ox-rs} y2={oy+20} stroke={SVG_DIM} strokeWidth="1.2" markerEnd="url(#arr)" markerStart="url(#arr)"/>
+      <MT x={(ox-ros+ox-rs)/2} y={oy+32} textAnchor="middle" fontSize="16" fontFamily="sans-serif" fill={SVG_DIM} fontWeight="bold" mirror={mx}>{wl}</MT>
+      <line x1={ox-rs} y1={oy+20} x2={ox} y2={oy+20} stroke={SVG_DIM} strokeWidth="1.2" markerEnd="url(#arr)" markerStart="url(#arr)"/>
+      <MT x={(ox-rs+ox)/2} y={oy+32} textAnchor="middle" fontSize="16" fontFamily="sans-serif" fill={SVG_DIM} fontWeight="bold" mirror={mx}>{rl}</MT>
+
+
+      {/* 角度・内R注記 */}
+      <MT x={ox-rs-60} y={oy-rs-24} fontSize="16" fontFamily="sans-serif" fill="#333" fontWeight="bold" mirror={mx}>角度90°</MT>
+      <MT x={ox-rs-60} y={oy-rs-4}  fontSize="16" fontFamily="sans-serif" fill="#333" fontWeight="bold" mirror={mx}>内R {rl}</MT>
+      {/* 上下オフセット注記 */}
+      {offsetAmt && (() => { const o=normalizeElbowOffset(offsetAmt,offsetDir,offsetArrow); if(!o)return null; return (<g>
+        <text x={ox-rs-60} y={oy-rs+18} fontSize="16" fontFamily="sans-serif" fill="#e08000" fontWeight="bold">{o.amt}{o.dir} {o.arrow}</text>
+      </g>); })()}
+
+    </SvgWrap>
+  );
+};
+// ── 45°エルボ ──────────────────────────────────────────────────
+const SvgElbow45 = ({W, H, R, offsetAmt="", offsetDir="", offsetArrow="", mirror=false}) => {
+  const wl = W||"W", hl = H||"H", rl = R||"R";
+  const extR = (W && R) ? Number(W)+Number(R) : "W+R";
+
+  const wv = Math.max(Number(W)||100, 1);
+  const rv = Math.max(Number(R)||50, 1);
+  const scale = Math.min(220 / (wv + rv), 2.0);
+  const ws = Math.round(wv * scale);  // 管幅px
+  const rs = Math.round(rv * scale);  // 内Rpx
+  const ros = ws + rs;                // 外Rpx
+
+  const SIN = Math.sin(Math.PI/4), COS = Math.cos(Math.PI/4);
+  const pad = 20, dimR = Math.max(180, (String(wl).length + String(hl).length + 4) * 11 + 80), dimB = 30;
+  const ox = pad + ros, oy = pad + ros;
+  const svgW = ox + dimR, svgH = oy + dimB;
+  const f = 8;
+
+  // 中心=(ox,oy)
+  // 外弧: (ox, oy-ros) → 45°方向 (ox-ros*SIN, oy-ros*COS)
+  // 内弧: (ox, oy-rs)  → 45°方向 (ox-rs*SIN,  oy-rs*COS)
+  const eTop = {x: ox,           y: oy-ros};           // 外弧 入口側
+  const eEnd = {x: ox-ros*SIN,   y: oy-ros*COS};       // 外弧 出口側
+  const iTop = {x: ox,           y: oy-rs};             // 内弧 入口側
+  const iEnd = {x: ox-rs*SIN,    y: oy-rs*COS};        // 内弧 出口側
+
+  // 出口フランジ方向: 出口端線は45°斜め → フランジは端線に平行（同方向）
+  // 端線方向ベクトル: eEnd→iEnd = (iEnd.x-eEnd.x, iEnd.y-eEnd.y) を正規化
+  const dx = iEnd.x - eEnd.x, dy = iEnd.y - eEnd.y;
+  const len = Math.sqrt(dx*dx+dy*dy);
+  const fx = f * dx/len, fy = f * dy/len;
+
+  const mx = mirror;
+  return (
+    <SvgWrap w={svgW} h={svgH} mirror={mx}>
+      {/* 塗り */}
+      <path d={`M${eTop.x},${eTop.y} A${ros},${ros} 0 0,0 ${eEnd.x},${eEnd.y} L${iEnd.x},${iEnd.y} A${rs},${rs} 0 0,1 ${iTop.x},${iTop.y} Z`}
+        fill={SVG_FILL} stroke="none"/>
+      {/* 外弧（中心=ox,oy、半径ros、90°→45°） */}
+      <path d={`M${eTop.x},${eTop.y} A${ros},${ros} 0 0,0 ${eEnd.x},${eEnd.y}`} fill="none" stroke={SVG_STROKE} strokeWidth="2"/>
+      {/* 内弧（中心=ox,oy、半径rs、90°→45°） */}
+      <path d={`M${iTop.x},${iTop.y} A${rs},${rs} 0 0,0 ${iEnd.x},${iEnd.y}`} fill="none" stroke={SVG_STROKE} strokeWidth="2"/>
+      {/* 入口端線（垂直） */}
+      <line x1={eTop.x} y1={eTop.y} x2={iTop.x} y2={iTop.y} stroke={SVG_STROKE} strokeWidth="2"/>
+      {/* 出口端線（45°斜め） */}
+      <line x1={eEnd.x} y1={eEnd.y} x2={iEnd.x} y2={iEnd.y} stroke={SVG_STROKE} strokeWidth="2"/>
+
+      {/* フランジ 入口（垂直にはみ出す） */}
+      <line x1={eTop.x} y1={eTop.y-f} x2={eTop.x} y2={eTop.y+f} stroke={SVG_STROKE} strokeWidth="2"/>
+      <line x1={iTop.x} y1={iTop.y-f} x2={iTop.x} y2={iTop.y+f} stroke={SVG_STROKE} strokeWidth="2"/>
+      {/* フランジ 出口（45°端線と平行方向） */}
+      <line x1={eEnd.x-fx} y1={eEnd.y-fy} x2={eEnd.x+fx} y2={eEnd.y+fy} stroke={SVG_STROKE} strokeWidth="2"/>
+      <line x1={iEnd.x-fx} y1={iEnd.y-fy} x2={iEnd.x+fx} y2={iEnd.y+fy} stroke={SVG_STROKE} strokeWidth="2"/>
+
+      {/* 右辺寸法: W/R/全高 */}
+      <line x1={ox} y1={eTop.y} x2={ox+50} y2={eTop.y} stroke={SVG_DIM} strokeWidth="0.8" strokeDasharray="3,2"/>
+      <line x1={ox} y1={iTop.y} x2={ox+50} y2={iTop.y} stroke={SVG_DIM} strokeWidth="0.8" strokeDasharray="3,2"/>
+      <line x1={ox} y1={oy}     x2={ox+50} y2={oy}     stroke={SVG_DIM} strokeWidth="0.8" strokeDasharray="3,2"/>
+      <line x1={ox+22} y1={eTop.y} x2={ox+22} y2={iTop.y} stroke={SVG_DIM} strokeWidth="1.2" markerEnd="url(#arr)" markerStart="url(#arr)"/>
+      <MT x={ox+28} y={(eTop.y+iTop.y)/2-10} fontSize="17" fontFamily="sans-serif" fill="#1e3a8a" fontWeight="bold" textAnchor="start" mirror={mx}>W{wl}</MT>
+      <MT x={ox+28} y={(eTop.y+iTop.y)/2+10} fontSize="17" fontFamily="sans-serif" fill="#1e3a8a" fontWeight="bold" textAnchor="start" mirror={mx}>×H{hl}</MT>
+      <line x1={ox+22} y1={iTop.y} x2={ox+22} y2={oy} stroke={SVG_DIM} strokeWidth="1.2" markerEnd="url(#arr)" markerStart="url(#arr)"/>
+      <MT x={ox+26} y={(iTop.y+oy)/2} dominantBaseline="middle" fontSize="16" fontFamily="sans-serif" fill={SVG_DIM} fontWeight="bold" mirror={mx}>{rl}</MT>
+
+
+      {/* 角度・内R注記 */}
+      <MT x={pad} y={oy-rs} fontSize="16" fontFamily="sans-serif" fill="#333" fontWeight="bold" mirror={mx}>角度45°</MT>
+      <MT x={pad} y={oy-rs+18} fontSize="16" fontFamily="sans-serif" fill="#333" fontWeight="bold" mirror={mx}>内R {rl}</MT>
+      {offsetAmt && (() => { const o=normalizeElbowOffset(offsetAmt,offsetDir,offsetArrow); if(!o)return null; return (<g>
+        <text x={pad} y={oy-rs+36} fontSize="16" fontFamily="sans-serif" fill="#e08000" fontWeight="bold">{o.amt}{o.dir} {o.arrow}</text>
+      </g>); })()}
+
+    </SvgWrap>
+  );
+};
+
+// ── Sカーブ ───────────────────────────────────────────────────────
+const SvgScurve = ({W,H,R,L,offsetAmt="",offsetDir="",offsetArrow="",mirror=false}) => {
+  const wl=W||"W", hl=H||"H", rl=R||"R", ll=L||"L";
+
+  const wv = Math.max(Number(W)||150, 1);
+  const lv = Math.max(Number(L)||400, 1);
+  const rv = Math.max(Number(R)||80,  1);
+
+  // W・L・オフセットすべてをスケールに含める
+  const maxL = 360, maxOS = 180, maxW = 70;
+  const sc = Math.min(maxL/lv, maxOS/rv, maxW/wv, 1.5);
+  const ls = Math.round(lv * sc);
+  const os = Math.round(rv * sc); // オフセット量px
+  const ws = Math.round(wv * sc); // 管幅px
+
+  const padL=80, padR=40, padT=20, padB=60;
+  const x1=padL, x2=padL+ls;
+
+  // オフセット小→対称(0.31/0.58)、オフセット大→非対称に滑らかに遷移
+  const r = Math.min(os / (maxOS * sc / 1), 1);
+  const smoothR = r * r;
+
+  const _bzd = (t,p0,p1,p2,p3) => { const u=1-t; return 3*(u*u*(p1-p0)+2*u*t*(p2-p1)+t*t*(p3-p2)); };
+  const calcMaxAngle = (cpx1, cpx2) => {
+    let max=0;
+    for(let i=0;i<=400;i++){
+      const t=i/400;
+      const dx=_bzd(t,x1,cpx1,cpx2,x2);
+      const dy=_bzd(t,0,0,os,os);
+      const a=Math.abs(Math.atan2(Math.abs(dy),Math.abs(dx)));
+      if(a>max) max=a;
+    }
+    return max;
+  };
+  const calcWv = (cpx1, cpx2) => {
+    const a = calcMaxAngle(cpx1, cpx2);
+    // cos補正でWを保証、ただしws*1.4でクランプ
+    return Math.min(Math.max(ws, Math.round(ws / Math.cos(a))), Math.round(ws * 1.4));
+  };
+
+  // 非対称度を少しずつ増やしながらWvがwsを守れる範囲で最大化
+  let b_cp1x = x1 + ls*0.31;
+  let b_cp2x = x1 + ls*0.58;
+  const maxShift = smoothR * 0.22; // smoothRで最大移動量をスケール
+  for(let s=0; s<=maxShift; s+=0.01){
+    const c1 = x1 + ls*(0.31 - s);
+    const c2 = x1 + ls*(0.58 + s);
+    const wvTest = calcWv(c1, c2);
+    if(wvTest <= Math.round(ws * 1.4)){
+      b_cp1x = c1;
+      b_cp2x = c2;
+    } else {
+      break;
+    }
+  }
+  // 上曲線は下曲線の180°回転（左右反転）
+  const t_cp1x = x2 - (b_cp2x - x1);
+  const t_cp2x = x2 - (b_cp1x - x1);
+
+  // 最終Wv計算
+  const maxAngle = Math.max(calcMaxAngle(t_cp1x, t_cp2x), calcMaxAngle(b_cp1x, b_cp2x));
+  const Wv = Math.min(Math.max(ws, Math.round(ws / Math.cos(maxAngle))), Math.round(ws * 1.4));
+
+  const leftTop=padT, leftBot=padT+Wv;
+  const rightTop=padT+os, rightBot=padT+os+Wv;
+  const dimRscurve = Math.max(80, (String(wl).length + String(hl).length + 5) * 11 + 40);
+  const svgW=x2+dimRscurve, svgH=rightBot+padB;
+
+  const topPath = `M${x1},${leftTop} C${t_cp1x},${leftTop} ${t_cp2x},${rightTop} ${x2},${rightTop}`;
+  const botPath = `M${x1},${leftBot} C${b_cp1x},${leftBot} ${b_cp2x},${rightBot} ${x2},${rightBot}`;
+
+  // 内側縦線位置（端線から10px内側）
+  const ilx = x1 + 10;
+  const irx = x2 - 10;
+  const smooth = t => 3*t*t - 2*t*t*t;
+  const yAtX = (x,y0,y1) => { const t=(x-x1)/(x2-x1); return y0+(y1-y0)*smooth(t); };
+  const ilTopY = yAtX(ilx, leftTop, rightTop);
+  const ilBotY = yAtX(ilx, leftBot, rightBot);
+  const irTopY = yAtX(irx, leftTop, rightTop);
+  const irBotY = yAtX(irx, leftBot, rightBot);
+
+  const f = 10; // フランジはみ出し量
+
+  const mx = mirror;
+  return (
+    <SvgWrap w={svgW} h={svgH} mirror={mx}>
+      {/* 塗り */}
+      <path d={`${topPath} L${x2},${rightBot} C${b_cp2x},${rightBot} ${b_cp1x},${leftBot} ${x1},${leftBot} Z`}
+        fill={SVG_FILL} stroke="none" opacity="0.7"/>
+
+      {/* 上曲線 */}
+      <path d={topPath} fill="none" stroke={SVG_STROKE} strokeWidth="2"/>
+      {/* 下曲線 */}
+      <path d={botPath} fill="none" stroke={SVG_STROKE} strokeWidth="2"/>
+
+      {/* 左端線 */}
+      <line x1={x1} y1={leftTop} x2={x1} y2={leftBot} stroke={SVG_STROKE} strokeWidth="2"/>
+      {/* 右端線 */}
+      <line x1={x2} y1={rightTop} x2={x2} y2={rightBot} stroke={SVG_STROKE} strokeWidth="2"/>
+
+      {/* フランジ 左（垂直にはみ出す） */}
+      <line x1={x1} y1={leftTop-f}  x2={x1} y2={leftTop+f}  stroke={SVG_STROKE} strokeWidth="2"/>
+      <line x1={x1} y1={leftBot-f}  x2={x1} y2={leftBot+f}  stroke={SVG_STROKE} strokeWidth="2"/>
+      {/* フランジ 右（垂直にはみ出す） */}
+      <line x1={x2} y1={rightTop-f} x2={x2} y2={rightTop+f} stroke={SVG_STROKE} strokeWidth="2"/>
+      <line x1={x2} y1={rightBot-f} x2={x2} y2={rightBot+f} stroke={SVG_STROKE} strokeWidth="2"/>
+
+      {/* 内側縦線 左・右 */}
+      <line x1={ilx} y1={ilTopY} x2={ilx} y2={ilBotY} stroke={SVG_STROKE} strokeWidth="2"/>
+      <line x1={irx} y1={irTopY} x2={irx} y2={irBotY} stroke={SVG_STROKE} strokeWidth="2"/>
+
+      {/* 引出し破線: rightTop・rightBot（右辺寸法用） */}
+      <line x1={x2+4} y1={rightTop} x2={x2+52} y2={rightTop} stroke={SVG_DIM} strokeWidth="0.7" strokeDasharray="3,2"/>
+      <line x1={x2+4} y1={rightBot} x2={x2+52} y2={rightBot} stroke={SVG_DIM} strokeWidth="0.7" strokeDasharray="3,2"/>
+
+      {/* W×H 右辺 上段に2行表示（90°エルボと同じ） */}
+      <line x1={x2+24} y1={rightTop} x2={x2+24} y2={rightBot} stroke={SVG_DIM} strokeWidth="1.2" markerEnd="url(#arr)" markerStart="url(#arr)"/>
+      <MT x={x2+28} y={rightTop+(rightBot-rightTop)*0.35-6} fontSize="17" fontFamily="sans-serif" fill="#1e3a8a" fontWeight="bold" textAnchor="start" mirror={mx}>W{wl}</MT>
+      <MT x={x2+28} y={rightTop+(rightBot-rightTop)*0.35+14} fontSize="17" fontFamily="sans-serif" fill="#1e3a8a" fontWeight="bold" textAnchor="start" mirror={mx}>×H{hl}</MT>
+
+      {/* 引出し破線: leftBot〜rightBot（オフセット用） */}
+      <line x1={x1-4} y1={leftBot}  x2={x1-52} y2={leftBot}  stroke={SVG_DIM} strokeWidth="0.7" strokeDasharray="3,2"/>
+      <line x1={x1-4} y1={rightBot} x2={x1-52} y2={rightBot} stroke={SVG_DIM} strokeWidth="0.7" strokeDasharray="3,2"/>
+
+      {/* オフセット寸法（leftBot〜rightBot） */}
+      <line x1={x1-28} y1={leftBot} x2={x1-28} y2={rightBot} stroke={SVG_DIM} strokeWidth="1.2" markerEnd="url(#arr)" markerStart="url(#arr)"/>
+      <MT x={x1-32} y={(leftBot+rightBot)/2} dominantBaseline="middle" textAnchor="end" fontSize="16" fontFamily="sans-serif" fill={SVG_DIM} fontWeight="bold" mirror={mx}>x{rl}</MT>
+
+      {/* 全長L寸法（引出し破線＋矢印） */}
+      <line x1={x1} y1={rightBot+8}  x2={x1} y2={rightBot+28} stroke={SVG_DIM} strokeWidth="0.7" strokeDasharray="3,2"/>
+      <line x1={x2} y1={rightBot+8}  x2={x2} y2={rightBot+28} stroke={SVG_DIM} strokeWidth="0.7" strokeDasharray="3,2"/>
+      <line x1={x1} y1={rightBot+24} x2={x2} y2={rightBot+24} stroke={SVG_DIM} strokeWidth="1.2" markerEnd="url(#arr)" markerStart="url(#arr)"/>
+      <MT x={(x1+x2)/2} y={rightBot+38} textAnchor="middle" fontSize="16" fontFamily="sans-serif" fill={SVG_DIM} fontWeight="bold" mirror={mx}>L={ll}</MT>
+
+      {/* オフセット中央注記 */}
+      <MT x={(x1+x2)/2} y={(leftTop+rightBot)/2-10} textAnchor="middle" fontSize="14" fontFamily="sans-serif" fill="#1e3a8a" fontWeight="bold" mirror={mx}>オフセット={rl}</MT>
+      {offsetAmt && (() => { const o=normalizeElbowOffset(offsetAmt,offsetDir,offsetArrow); if(!o)return null; return (
+        <text x={(x1+x2)/2} y={(leftTop+rightBot)/2+12} textAnchor="middle" fontSize="15" fontFamily="sans-serif" fill="#e08000" fontWeight="bold">{o.amt}{o.dir} {o.arrow}</text>
+      ); })()}
+    </SvgWrap>
+  );
+};
+
+
+
+// ── ホッパー ──────────────────────────────────────────────────────
+const SvgHopper = ({inW,inH,outW,outH,L,base,offset="",offsetAmt="",baseAmt="",baseDir="",baseArrow="",mirror=false}) => {
+  const iW=inW||"W1", iH=inH||"H1", oW=outW||"W2", oH=outH||"H2", ll=L||"L", bl=base||"基準";
+  // 固定レイアウト: 入口左、出口右、台形
+  const iWv = Math.max(Number(inW)||150, 1);
+  const iHv = Math.max(Number(inH)||150, 1);
+  const oWv = Math.max(Number(outW)||100, 1);
+  const oHv = Math.max(Number(outH)||100, 1);
+  const lv  = Math.max(Number(L)||300, 1);
+  const oaV = Math.max(Number(offsetAmt)||0, 0);
+
+  const maxH = 160, maxL = 260;
+  const scH = Math.min(maxH / Math.max(iWv, oWv + oaV), 1.5);
+  const scL = Math.min(maxL / lv, 1.5);
+  const sc  = Math.min(scH, scL);
+
+  const inH_px  = Math.round(iWv * sc);
+  const outH_px = Math.round(oWv * sc);
+  const oa_px   = Math.round(oaV * sc);
+  const len_px  = Math.round(lv  * sc);
+
+  const padT=40, padB=50;
+  const padL = Math.max(80, (String(iW).length + String(iH).length + 5) * 11 + 50);
+  const padR = Math.max(100, (String(oW).length + String(oH).length + 5) * 11 + 50);
+  const x0 = padL, x1 = padL + len_px;
+
+  const inTop = padT, inBot = padT + inH_px;
+  const inMid = (inTop + inBot) / 2;
+
+  const offs = offset || "";
+  let outTop, outBot;
+  if(offs === "左平"){
+    outTop = inTop + oa_px;
+    outBot = outTop + outH_px;
+  } else if(offs === "右平"){
+    outBot = inBot - oa_px;
+    outTop = outBot - outH_px;
+  } else if(offs === "左右芯々"){
+    outTop = Math.round(inMid - outH_px/2);
+    outBot = Math.round(inMid + outH_px/2);
+  } else {
+    outTop = Math.round(inMid - outH_px/2);
+    outBot = Math.round(inMid + outH_px/2);
+  }
+
+  const svgH = Math.max(inBot, outBot) + padB;
+  const svgW = x1 + padR;
+  const mx = mirror;
+  return (
+    <SvgWrap w={svgW} h={svgH} mirror={mx}>
+      {/* 塗り */}
+      <path d={`M${x0},${inTop} L${x1},${outTop} L${x1},${outBot} L${x0},${inBot} Z`}
+        fill={SVG_FILL} stroke="none" opacity="0.7"/>
+      {/* 輪郭 */}
+      <path d={`M${x0},${inTop} L${x1},${outTop} L${x1},${outBot} L${x0},${inBot} Z`}
+        fill="none" stroke={SVG_STROKE} strokeWidth="2"/>
+      {/* 左端線（入口フランジ） */}
+      <line x1={x0} y1={inTop-8}  x2={x0} y2={inTop+8}  stroke={SVG_STROKE} strokeWidth="2"/>
+      <line x1={x0} y1={inBot-8}  x2={x0} y2={inBot+8}  stroke={SVG_STROKE} strokeWidth="2"/>
+      {/* 右端線（出口フランジ） */}
+      <line x1={x1} y1={outTop-8} x2={x1} y2={outTop+8} stroke={SVG_STROKE} strokeWidth="2"/>
+      <line x1={x1} y1={outBot-8} x2={x1} y2={outBot+8} stroke={SVG_STROKE} strokeWidth="2"/>
+
+      {/* 基準面マーク */}
+      {(bl==="下平")&&<line x1={x0-5} y1={inBot} x2={x1+5} y2={outBot} stroke="#f59e0b" strokeWidth="1.2" strokeDasharray="5,3"/>}
+      {(bl==="上平")&&<line x1={x0-5} y1={inTop} x2={x1+5} y2={outTop} stroke="#f59e0b" strokeWidth="1.2" strokeDasharray="5,3"/>}
+      {bl==="芯"&&<line x1={x0-5} y1={(inTop+inBot)/2} x2={x1+5} y2={(outTop+outBot)/2} stroke="#f59e0b" strokeWidth="1.2" strokeDasharray="5,3"/>}
+
+      {/* 左側寸法: 入口W（内側）・入口H（外側） */}
+      <line x1={x0-4}  y1={inTop} x2={x0-padL+8} y2={inTop} stroke={SVG_DIM} strokeWidth="0.7" strokeDasharray="3,2"/>
+      <line x1={x0-4}  y1={inBot} x2={x0-padL+8} y2={inBot} stroke={SVG_DIM} strokeWidth="0.7" strokeDasharray="3,2"/>
+      <line x1={x0-18} y1={inTop} x2={x0-18} y2={inBot} stroke={SVG_DIM} strokeWidth="1.2" markerEnd="url(#arr)" markerStart="url(#arr)"/>
+      <MT x={mx ? x1+22 : x0-22} y={(inTop+inBot)/2-20} textAnchor={mx?"start":"end"} fontSize="17" fontFamily="sans-serif" fill={SVG_DIM} fontWeight="bold" mirror={false}>W{iW}</MT>
+      <MT x={mx ? x1+22 : x0-22} y={(inTop+inBot)/2}    textAnchor={mx?"start":"end"} fontSize="17" fontFamily="sans-serif" fill={SVG_DIM} fontWeight="bold" mirror={false}>×</MT>
+      <MT x={mx ? x1+22 : x0-22} y={(inTop+inBot)/2+20} textAnchor={mx?"start":"end"} fontSize="17" fontFamily="sans-serif" fill={SVG_DIM} fontWeight="bold" mirror={false}>H{iH}</MT>
+
+      {/* 右側寸法: 出口W・H */}
+      <line x1={x1+4}  y1={outTop} x2={x1+padR-8} y2={outTop} stroke={SVG_DIM} strokeWidth="0.7" strokeDasharray="3,2"/>
+      <line x1={x1+4}  y1={outBot} x2={x1+padR-8} y2={outBot} stroke={SVG_DIM} strokeWidth="0.7" strokeDasharray="3,2"/>
+      <line x1={x1+18} y1={outTop} x2={x1+18} y2={outBot} stroke={SVG_DIM} strokeWidth="1.2" markerEnd="url(#arr)" markerStart="url(#arr)"/>
+      <MT x={mx ? x0-22 : x1+22} y={(outTop+outBot)/2-20} textAnchor={mx?"end":"start"} fontSize="17" fontFamily="sans-serif" fill={SVG_DIM} fontWeight="bold" mirror={false}>W{oW}</MT>
+      <MT x={mx ? x0-22 : x1+22} y={(outTop+outBot)/2}    textAnchor={mx?"end":"start"} fontSize="17" fontFamily="sans-serif" fill={SVG_DIM} fontWeight="bold" mirror={false}>×</MT>
+      <MT x={mx ? x0-22 : x1+22} y={(outTop+outBot)/2+20} textAnchor={mx?"end":"start"} fontSize="17" fontFamily="sans-serif" fill={SVG_DIM} fontWeight="bold" mirror={false}>H{oH}</MT>
+
+      {/* 偏り量寸法（右外側） */}
+      {oa_px > 0 && offs === "左平" && <>
+        <line x1={x1+4}  y1={inTop}  x2={x1+padR-8} y2={inTop}  stroke={SVG_DIM} strokeWidth="0.7" strokeDasharray="3,2"/>
+        <line x1={x1+4}  y1={inBot}  x2={x1+padR-8} y2={inBot}  stroke={SVG_DIM} strokeWidth="0.7" strokeDasharray="3,2"/>
+        <line x1={x1+52} y1={inTop}  x2={x1+52} y2={outTop} stroke={SVG_DIM} strokeWidth="1.2" markerEnd="url(#arr)" markerStart="url(#arr)"/>
+        <MT x={x1+56} y={(inTop+outTop)/2} dominantBaseline="middle" fontSize="13" fontFamily="sans-serif" fill={SVG_DIM} fontWeight="bold" mirror={mx}>{offsetAmt}</MT>
+        <line x1={x1+52} y1={outBot} x2={x1+52} y2={inBot}  stroke={SVG_DIM} strokeWidth="1.2" markerEnd="url(#arr)" markerStart="url(#arr)"/>
+        <MT x={x1+56} y={(outBot+inBot)/2} dominantBaseline="middle" fontSize="13" fontFamily="sans-serif" fill={SVG_DIM} fontWeight="bold" mirror={mx}>{String(Number(inW||0)-Number(outW||0)-Number(offsetAmt||0)||"")}</MT>
+      </>}
+      {oa_px > 0 && offs === "右平" && <>
+        <line x1={x1+4}  y1={inTop}  x2={x1+padR-8} y2={inTop}  stroke={SVG_DIM} strokeWidth="0.7" strokeDasharray="3,2"/>
+        <line x1={x1+4}  y1={inBot}  x2={x1+padR-8} y2={inBot}  stroke={SVG_DIM} strokeWidth="0.7" strokeDasharray="3,2"/>
+        <line x1={x1+52} y1={inTop}  x2={x1+52} y2={outTop} stroke={SVG_DIM} strokeWidth="1.2" markerEnd="url(#arr)" markerStart="url(#arr)"/>
+        <MT x={x1+56} y={(inTop+outTop)/2} dominantBaseline="middle" fontSize="13" fontFamily="sans-serif" fill={SVG_DIM} fontWeight="bold" mirror={mx}>{String(Number(inW||0)-Number(outW||0)-Number(offsetAmt||0)||"")}</MT>
+        <line x1={x1+52} y1={outBot} x2={x1+52} y2={inBot}  stroke={SVG_DIM} strokeWidth="1.2" markerEnd="url(#arr)" markerStart="url(#arr)"/>
+        <MT x={x1+56} y={(outBot+inBot)/2} dominantBaseline="middle" fontSize="13" fontFamily="sans-serif" fill={SVG_DIM} fontWeight="bold" mirror={mx}>{offsetAmt}</MT>
+      </>}
+
+      {/* L寸法（下） */}
+      <line x1={x0} y1={Math.max(inBot,outBot)+8}  x2={x0} y2={Math.max(inBot,outBot)+26} stroke={SVG_DIM} strokeWidth="0.7" strokeDasharray="3,2"/>
+      <line x1={x1} y1={Math.max(inBot,outBot)+8}  x2={x1} y2={Math.max(inBot,outBot)+26} stroke={SVG_DIM} strokeWidth="0.7" strokeDasharray="3,2"/>
+      <line x1={x0} y1={Math.max(inBot,outBot)+24} x2={x1} y2={Math.max(inBot,outBot)+24} stroke={SVG_DIM} strokeWidth="1.2" markerEnd="url(#arr)" markerStart="url(#arr)"/>
+      <MT x={(x0+x1)/2} y={Math.max(inBot,outBot)+38} textAnchor="middle" fontSize="16" fontFamily="sans-serif" fill={SVG_DIM} fontWeight="bold" mirror={mx}>L={ll}</MT>
+
+      {/* 中央ラベル */}
+      {(() => {
+        const cy = (Math.max(inTop,outTop)+Math.min(inBot,outBot))/2;
+        const cx = (x0+x1)/2;
+        const hasOffset = offs && oa_px > 0;
+        const dir = offs === "左平" ? "UP" : offs === "右平" ? "DOWN" : null;
+        const hasBase = baseAmt && baseDir;
+        const lines = [];
+        if(!hasBase && bl) lines.push(bl);
+        if(baseAmt) lines.push(baseAmt);
+        if(hasBase) lines.push(`${baseDir} ${baseArrow}`);
+        if(offs && !oa_px) lines.push(offs);
+        // 偏り方向の数値は表示しない
+        const totalH = lines.length * 14;
+        const startY = cy - totalH/2 + 7;
+        return <>
+          {lines.map((line, i) => (
+            <MT key={i} x={cx} y={startY + i*14} textAnchor="middle" dominantBaseline="middle" fontSize="16" fontFamily="sans-serif" fill="#1e3a8a" fontWeight="bold" mirror={mx}>{line}</MT>
+          ))}
+          {hasOffset && dir && offs !== "左平" && offs !== "右平" && (
+            <line x1={cx+40} y1={dir==="UP"?cy+10:cy-2} x2={cx+40} y2={dir==="UP"?cy-2:cy+10} stroke="#1e3a8a" strokeWidth="1.5" markerEnd="url(#arr-blue)"/>
+          )}
+        </>;
+      })()}
+    </SvgWrap>
+  );
+};
+
+// ── 図を選択して表示 ──────────────────────────────────────────────
+const PartDiagram = ({form}) => {
+  const {type,width,height,length,r,inW,inH,outW,outH,base,elbowOffset,elbowOffsetAmt,elbowOffsetDir,elbowOffsetArrow,mirrorDir} = form;
+  const isMirror = mirrorDir === 'left';
+  return (
+    <div className="bg-gray-50 border border-gray-200 rounded-xl p-3 mb-3">
+      {type==="straight" && <SvgStraight W={width} H={height} L={length}/>}
+      {type==="elbow90"  && <SvgElbow90  W={width} H={height} R={r} offsetAmt={elbowOffset?elbowOffsetAmt:""} offsetDir={elbowOffsetDir} offsetArrow={elbowOffsetArrow} mirror={isMirror}/>}
+      {type==="elbow45"  && <SvgElbow45  W={width} H={height} R={r} offsetAmt={elbowOffset?elbowOffsetAmt:""} offsetDir={elbowOffsetDir} offsetArrow={elbowOffsetArrow} mirror={isMirror}/>}
+      {type==="scurve"   && <SvgScurve   W={width} H={height} R={r} L={length} offsetAmt={elbowOffset?elbowOffsetAmt:""} offsetDir={elbowOffsetDir} offsetArrow={elbowOffsetArrow} mirror={isMirror}/>}
+      {type==="elbow_ldiff" && <SvgElbowLdiff W={width} H={height} R={r} ldiffAmt={form.ldiffAmt} ldiffSide={form.ldiffSide} mirror={isMirror}/>}
+      {type==="elbow_rdiff" && <SvgElbowRdiff W={width} H={height} R={r} ang={form.angle||"90"} ldiffAmt={form.ldiffAmt} ldiffSide={form.ldiffSide} mirror={isMirror}/>}
+      {type==="hopper"   && <SvgHopper   inW={inW} inH={inH} outW={outW} outH={outH} L={length} base={base} offset={form.offset} offsetAmt={form.offsetAmt} baseAmt={form.baseAmt} baseDir={form.baseDir} baseArrow={form.baseArrow} mirror={isMirror}/>}
+    </div>
+  );
+};
+
+// ★ これがトップレベルにある→部材種類ボタン押しても再マウントされない
+const EditPartScreen = ({initial,partIndex,onSave,onBack}) => {
+  const [form,setForm] = useState(initial || {type:"straight",qty:1});
+  const set = (k,v) => setForm(p=>({...p,[k]:v}));
+  return (
+    <div className="min-h-screen bg-gray-100 flex flex-col">
+      <TopBar title={partIndex===null?"部材追加":"部材編集"} onBack={onBack}/>
+      <div className="flex-1 overflow-y-auto p-4">
+        {/* 部材種類 */}
+        <Card>
+          <SectionTitle>部材種類</SectionTitle>
+          <div className="grid grid-cols-2 gap-2">
+            {PART_TYPES.map(t=>(
+              <button key={t.id} onClick={()=>set("type",t.id)}
+                className={`py-3 rounded-xl border-2 text-base font-bold ${form.type===t.id?"bg-blue-700 text-white border-blue-700":"bg-white text-gray-700 border-gray-300"}`}>
+                {t.label}
+              </button>
+            ))}
+          </div>
+        </Card>
+
+        {/* 数量 */}
+        <Card>
+          <Label>数量</Label>
+          <div className="flex items-center gap-3">
+            <button onClick={()=>set("qty",Math.max(1,(form.qty||1)-1))}
+              className="w-14 h-14 bg-gray-200 rounded-xl text-2xl font-bold active:bg-gray-300">－</button>
+            <div className="flex-1 text-center text-3xl font-extrabold text-blue-800">{form.qty||1}</div>
+            <button onClick={()=>set("qty",(form.qty||1)+1)}
+              className="w-14 h-14 bg-gray-200 rounded-xl text-2xl font-bold active:bg-gray-300">＋</button>
+          </div>
+        </Card>
+
+        {/* 寸法図 ＋ 入力欄（セットで表示） */}
+        <Card>
+          <SectionTitle>寸法（mm）</SectionTitle>
+
+          {/* ★ 図をここに挿入 */}
+          <PartDiagram form={form}/>
+
+          {/* 向き選択（曲管共通） */}
+          {["elbow90","elbow45","scurve","elbow_ldiff","elbow_rdiff"].includes(form.type)&&(
+            <div className="mb-3">
+              <Label>向き</Label>
+              <div className="flex gap-2 mt-1">
+                {[{id:"right",label:"右 →"},{id:"left",label:"← 左（反転）"}].map(d=>{
+                  const sel=(form.mirrorDir||"right")===d.id;
+                  return <button key={d.id} onClick={()=>set("mirrorDir",d.id)}
+                    className={`px-4 py-3 rounded-xl border-2 font-bold text-base flex-1 ${sel?"bg-blue-700 text-white border-blue-700":"bg-white text-gray-700 border-gray-300"}`}>{d.label}</button>;
+                })}
+              </div>
+            </div>
+          )}
+
+          {/* 直管・エルボ・Sカーブ共通 */}
+          {["straight","elbow90","elbow45","scurve"].includes(form.type)&&<>
+            <NumField label="幅（W）"   value={form.width||""}  onChange={v=>set("width",v)}  placeholder="例: 300"/>
+            <NumField label="高さ（H）" value={form.height||""} onChange={v=>set("height",v)} placeholder="例: 200"/>
+          </>}
+          {form.type==="straight"&&
+            <NumField label="長さ（L）" value={form.length||""} onChange={v=>set("length",v)} placeholder="例: 1820"/>}
+          {(form.type==="elbow90"||form.type==="elbow45")&&
+            <NumField label="R（内R）" value={form.r||""} onChange={v=>set("r",v)} placeholder="例: 150"/>}
+          {(form.type==="elbow90"||form.type==="elbow45"||form.type==="scurve")&&<>
+            <div className="mb-1 mt-2">
+              <Label>上下オフセット</Label>
+              <div className="flex gap-2 mt-1">
+                <button onClick={()=>set("elbowOffset",!form.elbowOffset)}
+                  className={`px-3 py-2 rounded-lg border-2 font-semibold text-sm ${form.elbowOffset?"bg-orange-500 text-white border-orange-500":"bg-white text-gray-700 border-gray-300"}`}>
+                  {form.elbowOffset?"あり":"なし"}
+                </button>
+              </div>
+            </div>
+            {form.elbowOffset&&<>
+              <NumField label="オフセット量" value={form.elbowOffsetAmt||""} onChange={v=>set("elbowOffsetAmt",v)} placeholder="例: 100"/>
+              <div className="mb-1">
+                <Label>DN / UP</Label>
+                <div className="flex gap-2 mt-1">
+                  {["DN","UP"].map(d=>{const sel=(form.elbowOffsetDir||"")===d; return(
+                    <button key={d} onClick={()=>set("elbowOffsetDir",sel?"":d)}
+                      className={`px-4 py-2 rounded-lg border-2 font-bold text-base ${sel?"bg-blue-700 text-white border-blue-700":"bg-white text-gray-700 border-gray-300"}`}>{d}</button>
+                  );})}
+                </div>
+              </div>
+              <div className="mb-1">
+                <Label>矢印方向</Label>
+                <div className="flex gap-2 mt-1">
+                  {["→","←"].map(d=>{const sel=(form.elbowOffsetArrow||"")===d; return(
+                    <button key={d} onClick={()=>set("elbowOffsetArrow",sel?"":d)}
+                      className={`px-4 py-2 rounded-lg border-2 font-bold text-lg ${sel?"bg-blue-700 text-white border-blue-700":"bg-white text-gray-700 border-gray-300"}`}>{d}</button>
+                  );})}
+                </div>
+              </div>
+            </>}
+          </>}
+          {form.type==="scurve"&&<>
+            <NumField label="オフセット（R）" value={form.r||""}      onChange={v=>set("r",v)}      placeholder="例: 150"/>
+            <NumField label="長さ（L）"       value={form.length||""} onChange={v=>set("length",v)} placeholder="例: 600"/>
+          </>}
+          {form.type==="elbow_rdiff"&&<>
+            <NumField label="幅（W）"    value={form.width||""}    onChange={v=>set("width",v)}    placeholder="例: 400"/>
+            <NumField label="高さ（H）"  value={form.height||""}   onChange={v=>set("height",v)}   placeholder="例: 250"/>
+            <NumField label="内R"        value={form.r||""}        onChange={v=>set("r",v)}        placeholder="例: 200"/>
+            <NumField label="角度（°）"  value={form.angle||""}    onChange={v=>set("angle",v)}    placeholder="例: 90"/>
+            <NumField label="延長量（CF）" value={form.ldiffAmt||""} onChange={v=>set("ldiffAmt",v)} placeholder="例: 150"/>
+            <div className="mb-2 mt-1">
+              <Label>延長する側</Label>
+              <div className="flex gap-2 mt-1">
+                {["入口側","出口側"].map(d=>{const sel=(form.ldiffSide||"出口側")===d; return(
+                  <button key={d} onClick={()=>set("ldiffSide",d)}
+                    className={`px-4 py-3 rounded-xl border-2 font-bold text-base flex-1 ${sel?"bg-blue-700 text-white border-blue-700":"bg-white text-gray-700 border-gray-300"}`}>{d}</button>
+                );})}
+              </div>
+            </div>
+          </>}
+          {form.type==="elbow_ldiff"&&<>
+            <NumField label="幅（W）"   value={form.width||""}  onChange={v=>set("width",v)}  placeholder="例: 400"/>
+            <NumField label="高さ（H）" value={form.height||""} onChange={v=>set("height",v)} placeholder="例: 300"/>
+            <NumField label="内R"       value={form.r||""}      onChange={v=>set("r",v)}      placeholder="例: 250"/>
+            <NumField label="角度（°）" value={form.angle||""} onChange={v=>set("angle",v)}  placeholder="例: 90"/>
+            <NumField label="延長量"    value={form.ldiffAmt||""} onChange={v=>set("ldiffAmt",v)} placeholder="例: 200"/>
+            <div className="mb-1 mt-2">
+              <Label>延長する側</Label>
+              <div className="flex gap-2 mt-1">
+                {["入口側","出口側"].map(d=>{const sel=(form.ldiffSide||"出口側")===d; return(
+                  <button key={d} onClick={()=>set("ldiffSide",d)}
+                    className={`px-4 py-3 rounded-xl border-2 font-bold text-base ${sel?"bg-blue-700 text-white border-blue-700":"bg-white text-gray-700 border-gray-300"}`}>{d}</button>
+                );})}
+              </div>
+            </div>
+          </>}
+          {form.type==="hopper"&&<>
+            <div className="mb-3">
+              <Label>向き</Label>
+              <div className="flex gap-2 mt-1">
+                {[{id:"right",label:"右 →"},{id:"left",label:"← 左（反転）"}].map(d=>{
+                  const sel=(form.mirrorDir||"right")===d.id;
+                  return <button key={d.id} onClick={()=>set("mirrorDir",d.id)}
+                    className={`px-4 py-3 rounded-xl border-2 font-bold text-base flex-1 ${sel?"bg-blue-700 text-white border-blue-700":"bg-white text-gray-700 border-gray-300"}`}>{d.label}</button>;
+                })}
+              </div>
+            </div>
+            <NumField label="入口幅（W1）"   value={form.inW||""}    onChange={v=>set("inW",v)}    placeholder="例: 400"/>
+            <NumField label="入口高さ（H1）" value={form.inH||""}    onChange={v=>set("inH",v)}    placeholder="例: 300"/>
+            <NumField label="出口幅（W2）"   value={form.outW||""}   onChange={v=>set("outW",v)}   placeholder="例: 200"/>
+            <NumField label="出口高さ（H2）" value={form.outH||""}   onChange={v=>set("outH",v)}   placeholder="例: 150"/>
+            <NumField label="長さ（L）"      value={form.length||""} onChange={v=>set("length",v)} placeholder="例: 500"/>
+            <Toggle label="基準" value={form.base} onChange={v=>set("base",v)} options={HOPPER_BASES}/>
+            {form.base && <NumField label="基準値" value={form.baseAmt||""} onChange={v=>set("baseAmt",v)} placeholder="例: 100"/>}
+            {form.base && form.baseAmt && <>
+              <div className="mb-1">
+                <Label>UP / DOWN</Label>
+                <div className="flex gap-2">
+                  {["UP","DOWN"].map(d=>{
+                    const sel=(form.baseDir||"")=== d;
+                    return <button key={d} onClick={()=>set("baseDir", sel ? "" : d)}
+                      className={`px-3 py-2 rounded-lg border-2 font-semibold text-sm ${sel?"bg-blue-700 text-white border-blue-700":"bg-white text-gray-700 border-gray-300"}`}>{d}</button>;
+                  })}
+                </div>
+              </div>
+              <div className="mb-1">
+                <Label>矢印方向</Label>
+                <div className="flex gap-2">
+                  {["←","→"].map(d=>{
+                    const sel=(form.baseArrow||"")=== d;
+                    return <button key={d} onClick={()=>set("baseArrow", sel ? "" : d)}
+                      className={`px-4 py-2 rounded-lg border-2 font-semibold text-lg ${sel?"bg-blue-700 text-white border-blue-700":"bg-white text-gray-700 border-gray-300"}`}>{d}</button>;
+                  })}
+                </div>
+              </div>
+            </>}
+            <div className="mb-1">
+              <Label>偏り方向</Label>
+              <div className="flex flex-wrap gap-2">
+                {["左平","右平","左右芯々"].map(d=>{
+                  const sel=(form.offset||"")=== d;
+                  return <button key={d} onClick={()=>set("offset", sel ? "" : d)}
+                    className={`px-3 py-2 rounded-lg border-2 font-semibold text-sm ${sel?"bg-orange-500 text-white border-orange-500":"bg-white text-gray-700 border-gray-300"}`}>{d}</button>;
+                })}
+              </div>
+            </div>
+            <NumField label="偏り量" value={form.offsetAmt||""} onChange={v=>set("offsetAmt",v)} placeholder="例: 50"/>
+          </>}
+        </Card>
+
+        <BtnPrimary onClick={()=>onSave(form)}>この部材を登録</BtnPrimary>
+      </div>
+    </div>
+  );
+};
+
+// ─── メインアプリ（状態管理とルーティングのみ） ───────────────────
+function DuctApp() {
+  const [screen,setScreen]           = useState("login");
+  const [user,setUser]               = useState(null);
+  const [sites]                      = useState(INITIAL_SITES);
+  const [floors]                     = useState(INITIAL_FLOORS);
+  const [areas]                      = useState(INITIAL_AREAS);
+  const [systems,setSystems]         = useState(INITIAL_SYSTEMS);
+  const [selSite,setSelSite]         = useState(null);
+  const [selFloor,setSelFloor]       = useState(null);
+  const [selArea,setSelArea]         = useState(null);
+  const [selSystem,setSelSystem]     = useState(null);
+  const [slips,setSlips]             = useState({});
+  const [editSysInit,setEditSysInit] = useState(null);
+  const [editPartInit,setEditPartInit]= useState(null);
+  const [editPartIdx,setEditPartIdx] = useState(null);
+
+  const siteName  = sites.find(x=>x.id===selSite)?.name||"";
+  const floorName = Object.values(floors).flat().find(x=>x.id===selFloor)?.name||"";
+  const areaName  = Object.values(areas).flat().find(x=>x.id===selArea)?.name||"";
+  const systemObj = Object.values(systems).flat().find(x=>x.id===selSystem);
+  const bc        = [siteName,floorName,areaName,systemObj?.name].filter(Boolean);
+
+  const slipKey = `${selArea}_${selSystem}`;
+  const slip = slips[slipKey] || {
+    parts:[],date:new Date().toLocaleDateString("ja-JP"),
+    slipNo:"No."+String(Object.keys(slips).length+1).padStart(3,"0"),
+    manufacturer:"黒澤製作所",installer:"株式会社 秀風",staff:user?.name||"",dueDate:"",
+  };
+  const setSlip = updater => setSlips(p=>({...p,[slipKey]:updater(p[slipKey]||slip)}));
+
+  const saveSystem = form => {
+    setSystems(p=>{
+      const list=p[selArea]||[];
+      const exists=list.find(s=>s.id===form.id);
+      return {...p,[selArea]:exists?list.map(s=>s.id===form.id?form:s):[...list,form]};
+    });
+    setScreen("system");
+  };
+
+  const savePart = form => {
+    setSlips(p=>{
+      const base=p[slipKey]||{parts:[]};
+      const parts=[...(base.parts||[])];
+      if(editPartIdx===null) parts.push(form); else parts[editPartIdx]=form;
+      return {...p,[slipKey]:{...base,parts}};
+    });
+    setScreen("slip");
+  };
+
+  if(screen==="login")   return <LoginScreen onLogin={u=>{setUser(u);setScreen("site");}}/>;
+  if(screen==="site")    return <ListScreen title="現場選択" items={sites}
+    onSelect={s=>{setSelSite(s.id);setSelFloor(null);setSelArea(null);setSelSystem(null);setScreen("floor");}}
+    onBack={null}/>;
+  if(screen==="floor")   return <ListScreen title="フロア選択" items={floors[selSite]||[]} breadcrumb={[siteName]}
+    onSelect={f=>{setSelFloor(f.id);setSelArea(null);setSelSystem(null);setScreen("area");}}
+    onBack={()=>setScreen("site")}/>;
+  if(screen==="area")    return <ListScreen title="エリア選択" items={areas[selFloor]||[]} breadcrumb={[siteName,floorName]}
+    onSelect={a=>{setSelArea(a.id);setSelSystem(null);setScreen("system");}}
+    onBack={()=>setScreen("floor")}/>;
+  if(screen==="system")  return <SystemScreen systems={systems} areaId={selArea} breadcrumb={bc}
+    onSelect={sys=>{setSelSystem(sys.id);setScreen("slip");}}
+    onEdit={sys=>{setEditSysInit({...sys});setScreen("editSystem");}}
+    onCopy={sys=>setSystems(p=>({...p,[selArea]:[...(p[selArea]||[]),{...sys,id:newId(),name:sys.name+"（コピー）"}]}))}
+    onNew={()=>{setEditSysInit({id:newId(),name:"",thickness:"0.6",flange:"共板",seam:"ボタンパンチ",seal:"四隅",sealMethod:"シール",rib:"あり",material:"亜鉛鉄板"});setScreen("editSystem");}}
+    onBack={()=>setScreen("area")}/>;
+  if(screen==="editSystem") return <EditSystemScreen initial={editSysInit} onSave={saveSystem} onBack={()=>setScreen("system")}/>;
+  if(screen==="slip")    return <SlipScreen slip={slip} setSlip={setSlip} system={systemObj}
+    ctx={{siteName,floorName,areaName}} breadcrumb={bc}
+    onAddPart={()=>{setEditPartInit({type:"straight",qty:1});setEditPartIdx(null);setScreen("editPart");}}
+    onEditPart={(p,i)=>{setEditPartInit({...p});setEditPartIdx(i);setScreen("editPart");}}
+    onBack={()=>setScreen("system")}/>;
+  if(screen==="editPart") return <EditPartScreen initial={editPartInit} partIndex={editPartIdx}
+    onSave={savePart} onBack={()=>setScreen("slip")}/>;
+  return <div>Unknown screen: {screen}</div>;
+}
+const root = ReactDOM.createRoot(document.getElementById('root'));
+root.render(React.createElement(DuctApp));
+  </script>
+</body>
+</html>
